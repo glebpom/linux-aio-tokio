@@ -1,0 +1,6 @@
+FROM rustembedded/cross:mips64el-unknown-linux-gnuabi64-0.2.0
+
+RUN apt-get update && apt-get install -y libclang-dev clang llvm
+
+ENV SYSROOT /usr/mips64el-linux-gnuabi64
+

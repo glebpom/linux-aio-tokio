@@ -1,32 +1,35 @@
-// ===============================================================================================
-// Copyright (c) 2018 Hans-Martin Will
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
-// ===============================================================================================
+#![allow(non_upper_case_globals)]
+#![allow(non_camel_case_types)]
+#![allow(non_snake_case)]
+#![allow(dead_code)]
+#![allow(clippy::all)]
 
-pub use libc::c_long;
+include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
-// Relevant symbols from the native bindings exposed via aio-bindings
-pub use aio_bindings::{aio_context_t, io_event, iocb, syscall, timespec, 
-                       __NR_io_destroy, __NR_io_getevents, __NR_io_setup, __NR_io_submit, 
-                       IOCB_CMD_PREAD, IOCB_CMD_PWRITE, IOCB_CMD_FSYNC, IOCB_CMD_FDSYNC, IOCB_FLAG_RESFD, 
-                       RWF_DSYNC, RWF_SYNC};
+/*
+ * extracted from https://elixir.bootlin.com/linux/latest/source/include/uapi/linux/fs.h#L372
+ * Flags for preadv2/pwritev2:
+ */
+
+/* per-IO O_DSYNC */
+//#define RWF_DSYNC	((__force __kernel_rwf_t)0x00000002)
+pub const RWF_DSYNC: u32 = 0x2;
+
+/* per-IO O_SYNC */
+//#define RWF_SYNC	((__force __kernel_rwf_t)0x00000004)
+pub const RWF_SYNC: u32 = 0x4;
+
+/* per-IO O_APPEND */
+//# define RWF_APPEND    ((__force __kernel_rwf_t)0x00000010)
+pub const RWF_APPEND: u32 = 0x10;
+
+/* high priority request, poll if possible */
+//# define RWF_HIPRI    ((__force __kernel_rwf_t)0x00000001)
+pub const RWF_HIPRI: u32 = 0x1;
+
+/* per-IO, return -EAGAIN if operation would block */
+//# define RWF_NOWAIT    ((__force __kernel_rwf_t)0x00000008)
+pub const RWF_NOWAIT: u32 = 0x8;
 
 // -----------------------------------------------------------------------------------------------
 // Inline functions that wrap the kernel calls for the entry points corresponding to Linux
@@ -37,24 +40,28 @@ pub use aio_bindings::{aio_context_t, io_event, iocb, syscall, timespec,
 //
 // See [io_setup(7)](http://man7.org/linux/man-pages/man2/io_setup.2.html) for details.
 #[inline(always)]
-pub unsafe fn io_setup(nr: c_long, ctxp: *mut aio_context_t) -> c_long {
-    syscall(__NR_io_setup as c_long, nr, ctxp)
+pub unsafe fn io_setup(nr: libc::c_long, ctxp: *mut aio_context_t) -> libc::c_long {
+    syscall(__NR_io_setup as libc::c_long, nr, ctxp)
 }
 
 // Destroy an AIO context.
 //
 // See [io_destroy(7)](http://man7.org/linux/man-pages/man2/io_destroy.2.html) for details.
 #[inline(always)]
-pub unsafe fn io_destroy(ctx: aio_context_t) -> c_long {
-    syscall(__NR_io_destroy as c_long, ctx)
+pub unsafe fn io_destroy(ctx: aio_context_t) -> libc::c_long {
+    syscall(__NR_io_destroy as libc::c_long, ctx)
 }
 
 // Submit a batch of IO operations.
 //
 // See [io_sumit(7)](http://man7.org/linux/man-pages/man2/io_submit.2.html) for details.
 #[inline(always)]
-pub unsafe fn io_submit(ctx: aio_context_t, nr: c_long, iocbpp: *mut *mut iocb) -> c_long {
-    syscall(__NR_io_submit as c_long, ctx, nr, iocbpp)
+pub unsafe fn io_submit(
+    ctx: aio_context_t,
+    nr: libc::c_long,
+    iocbpp: *mut *mut iocb,
+) -> libc::c_long {
+    syscall(__NR_io_submit as libc::c_long, ctx, nr, iocbpp)
 }
 
 // Retrieve completion events for previously submitted IO requests.
@@ -63,13 +70,13 @@ pub unsafe fn io_submit(ctx: aio_context_t, nr: c_long, iocbpp: *mut *mut iocb) 
 #[inline(always)]
 pub unsafe fn io_getevents(
     ctx: aio_context_t,
-    min_nr: c_long,
-    max_nr: c_long,
+    min_nr: libc::c_long,
+    max_nr: libc::c_long,
     events: *mut io_event,
     timeout: *mut timespec,
-) -> c_long {
+) -> libc::c_long {
     syscall(
-        __NR_io_getevents as c_long,
+        __NR_io_getevents as libc::c_long,
         ctx,
         min_nr,
         max_nr,

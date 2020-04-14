@@ -1,0 +1,6 @@
+FROM rustembedded/cross:aarch64-unknown-linux-musl-0.2.0
+
+RUN apt-get update && apt-get install -y libclang-dev clang llvm
+
+ENV SYSROOT /usr/local/aarch64-linux-musl
+

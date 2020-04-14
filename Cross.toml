@@ -1,0 +1,31 @@
+[target.aarch64-unknown-linux-gnu]
+image = "linux-aio-tokio/tests-aarch64-unknown-linux-gnu"
+
+[target.aarch64-unknown-linux-musl]
+image = "linux-aio-tokio/tests-aarch64-unknown-linux-musl"
+
+[target.armv7-unknown-linux-gnueabihf]
+image = "linux-aio-tokio/tests-armv7-unknown-linux-gnueabihf"
+
+[target.armv7-unknown-linux-musleabihf]
+image = "linux-aio-tokio/tests-armv7-unknown-linux-musleabihf"
+
+[target.mips64-unknown-linux-gnuabi64]
+image = "linux-aio-tokio/tests-mips64-unknown-linux-gnuabi64"
+
+[target.mips64el-unknown-linux-gnuabi64]
+image = "linux-aio-tokio/tests-mips64el-unknown-linux-gnuabi64"
+
+[target.mips-unknown-linux-gnu]
+image = "linux-aio-tokio/tests-mips-unknown-linux-gnu"
+
+[target.mips-unknown-linux-musl]
+image = "linux-aio-tokio/tests-mips-unknown-linux-musl"
+
+[target.mipsel-unknown-linux-gnu]
+image = "linux-aio-tokio/tests-mipsel-unknown-linux-gnu"
+
+[target.mipsel-unknown-linux-musl]
+image = "linux-aio-tokio/tests-mipsel-unknown-linux-musl"
+
+

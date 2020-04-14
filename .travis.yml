@@ -1,29 +1,76 @@
+jobs:
+  include:
+    - env: []
+      cache:
+        directories:
+          - /home/travis/.cargo
+      rust:
+        - stable
+      before_script:
+        - (test -x $HOME/.cargo/bin/cargo-cache || cargo install cargo-cache)
+        - rustup component add rustfmt
+        - rustup component add clippy
+      script:
+        - cargo fmt --all -- --check
+        - cargo clippy
+    - env: []
+      cache:
+        directories:
+          - /home/travis/.cargo
+      rust:
+        - stable
+      before_script:
+        - (test -x $HOME/.cargo/bin/cargo-cache || cargo install cargo-cache)
+        - cargo install cargo-deadlinks
+      script:
+        - cargo doc
+        - cargo deadlinks
+    - env: []
+      cache:
+        directories:
+          - /home/travis/.cargo
+      rust:
+        - stable
+      before_script:
+        - (test -x $HOME/.cargo/bin/cargo-cache || cargo install cargo-cache)
+      script: cargo build
+    - env: []
+      cache:
+        directories:
+          - /home/travis/.cargo
+      rust:
+        - beta
+      before_script:
+        - (test -x $HOME/.cargo/bin/cargo-cache || cargo install cargo-cache)
+      script: cargo build
+    - env: []
+      cache:
+        directories:
+          - /home/travis/.cargo
+      rust:
+        - nightly
+      before_script:
+        - (test -x $HOME/.cargo/bin/cargo-cache || cargo install cargo-cache)
+      script: cargo build
+
 language: rust
-sudo: false
-
-addons:
-    apt:
-        packages:
-            - libcurl4-openssl-dev
-            - libelf-dev
-            - libdw-dev
-            - binutils-dev
-            - gcc-multilib
-
-rust:
-  - stable
-  - beta
-  - nightly
-matrix:
-  allow_failures:
-    - rust: nightly
-cache: cargo
-
-script:
-  - cargo build --verbose --all
-  - cargo test --verbose --all
-  
-after_success:
-    - cargo install cargo-kcov
-    - cargo kcov --print-install-kcov-sh | bash
-    - cargo kcov --coveralls -- --verify
+cache:
+  directories:
+    - /home/travis/.cargo
+before_script:
+  - cargo install cross
+  - (test -x $HOME/.cargo/bin/cargo-cache || cargo install cargo-cache)
+before_cache:
+  - cargo cache -r registry
+env:
+  - TARGET=aarch64-unknown-linux-gnu
+  - TARGET=aarch64-unknown-linux-musl
+  - TARGET=armv7-unknown-linux-gnueabihf
+  - TARGET=armv7-unknown-linux-musleabihf
+  - TARGET=mips64-unknown-linux-gnuabi64
+  - TARGET=mips64el-unknown-linux-gnuabi64
+  - TARGET=mips-unknown-linux-gnu
+  - TARGET=mips-unknown-linux-musl
+  - TARGET=mipsel-unknown-linux-gnu
+  - TARGET=mipsel-unknown-linux-musl
+script: ./ci/test-target.sh $TARGET
