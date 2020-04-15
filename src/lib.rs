@@ -84,7 +84,7 @@ impl Drop for AioContextInner {
     }
 }
 
-/// Represents running AIO pool. Must be kept while AIO is in use.
+/// Represents running AIO context. Must be kept while AIO is in use.
 /// In order to close it, [`close`] should be called. It will wait
 /// until all related futures are finished.
 /// Otherwise, if it just dropped, the termination will be triggered,
@@ -111,12 +111,12 @@ pub struct AioContextHandle {
 }
 
 impl AioContextHandle {
-    /// Number of available AIO slots left in the pool
+    /// Number of available AIO slots left in the context
     pub fn available_slots(&self) -> Option<usize> {
         self.inner.upgrade().map(|i| i.capacity.available_permits())
     }
 
-    /// Submit command to the AIO pool
+    /// Submit command to the AIO context
     pub async fn submit_request(
         &self,
         fd: impl AsRawFd,
@@ -178,7 +178,7 @@ impl fmt::Debug for AioContextHandle {
     }
 }
 
-/// Create new AIO pool
+/// Create new AIO context
 pub fn aio_context(nr: usize) -> Result<(AioContext, AioContextHandle), AioContextError> {
     let mut eventfd = EventFd::new(0, false)?;
     let (stop_tx, stop_rx) = oneshot::channel();
@@ -254,7 +254,7 @@ pub fn aio_context(nr: usize) -> Result<(AioContext, AioContextHandle), AioConte
 }
 
 impl AioContext {
-    /// Number of available AIO slots left in the pool
+    /// Number of available AIO slots left in the context
     pub fn available_slots(&self) -> usize {
         self.inner.capacity.available_permits()
     }
