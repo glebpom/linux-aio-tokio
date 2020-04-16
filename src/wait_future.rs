@@ -3,28 +3,30 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use futures::channel::oneshot;
-use futures::future::FusedFuture;
 use futures::{ready, Future};
 
 use crate::errors::AioCommandError;
 use crate::requests::Request;
-use crate::{AioContextInner, AioResult};
+use crate::{AioContextInner, AioResult, LockedBuf};
+
+pub(crate) type WaitResult = (AioResult, Option<LockedBuf>);
 
 pub(crate) struct AioWaitFuture {
     rx: oneshot::Receiver<AioResult>,
     inner_context: Arc<AioContextInner>,
     request: Option<Box<Request>>,
-    result: Option<AioResult>,
 }
 
 impl AioWaitFuture {
-    fn return_request_to_pool(&mut self) {
+    fn return_request_to_pool_and_take_locked_buf(&mut self) -> Option<LockedBuf> {
         let req = self.request.take().unwrap();
+        let locked_buf = req.inner.lock().take_locked_buf();
         self.inner_context
             .requests
             .lock()
             .return_in_flight_to_ready(req);
         self.inner_context.capacity.add_permits(1);
+        locked_buf
     }
 
     pub fn new(
@@ -36,30 +38,19 @@ impl AioWaitFuture {
             rx,
             inner_context: inner_context.clone(),
             request: Some(request),
-            result: None,
         }
-    }
-}
-
-impl FusedFuture for AioWaitFuture {
-    fn is_terminated(&self) -> bool {
-        self.result.is_some()
     }
 }
 
 impl Future for AioWaitFuture {
-    type Output = Result<AioResult, AioCommandError>;
+    type Output = Result<WaitResult, AioCommandError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if self.request.is_some() {
-            self.result = Some(
-                ready!(Pin::new(&mut self.rx).poll(cx)).map_err(|_| AioCommandError::AioStopped)?,
-            );
+        let res = ready!(Pin::new(&mut self.rx).poll(cx))
+            .expect("AIO stopped while AioWaitFuture was not completed");
+        let buf = self.return_request_to_pool_and_take_locked_buf();
 
-            self.return_request_to_pool();
-        }
-
-        Poll::Ready(Ok(self.result.unwrap()))
+        Poll::Ready(Ok((res, buf)))
     }
 }
 
@@ -69,7 +60,7 @@ impl Drop for AioWaitFuture {
 
         if self.rx.try_recv().is_ok() {
             // the sender have successfully sent data to the channel, but we didn't accept it
-            self.return_request_to_pool();
+            self.return_request_to_pool_and_take_locked_buf();
         }
 
         if let Some(in_flight) = self.request.take() {

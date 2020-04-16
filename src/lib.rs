@@ -14,7 +14,7 @@
 use std::os::unix::prelude::*;
 use std::ptr;
 use std::sync::{Arc, Weak};
-use std::{fmt, io};
+use std::{fmt, io, mem};
 
 use futures::channel::oneshot;
 use futures::{pin_mut, select, FutureExt, StreamExt};
@@ -120,24 +120,25 @@ impl AioContextHandle {
     pub async fn submit_request(
         &self,
         fd: impl AsRawFd,
-        command: RawCommand,
-    ) -> Result<AioResult, AioCommandError> {
+        mut command: RawCommand,
+    ) -> Result<(AioResult, Option<LockedBuf>), AioCommandError> {
         let inner_context = self
             .inner
             .upgrade()
-            .ok_or(AioCommandError::AioStopped)?
+            .ok_or_else(|| AioCommandError::AioStopped {
+                buf: command.buf.take(),
+            })?
             .clone();
 
         inner_context.capacity.acquire().await.forget();
 
         let mut request = inner_context.requests.lock().take();
 
-        let request_addr = Request::aio_addr(&request);
+        let request_addr = request.aio_addr();
 
         let (tx, rx) = oneshot::channel();
-        let base;
 
-        {
+        let result = {
             let mut request_ptr_array: [*mut aio::iocb; 1] = [ptr::null_mut(); 1];
 
             request.set_payload(
@@ -145,29 +146,45 @@ impl AioContextHandle {
                 request_addr,
                 inner_context.eventfd,
                 fd.as_raw_fd(),
-                command,
+                &mut command,
                 tx,
             );
 
-            base = AioWaitFuture::new(&inner_context, rx, request);
-
-            let iocb_ptr = request_ptr_array.as_mut_ptr() as *mut *mut aio::iocb;
-
-            let result = unsafe { aio::io_submit(inner_context.context, 1, iocb_ptr) };
-
-            if result != 1 {
-                return Err(AioCommandError::IoSubmit(io::Error::last_os_error()));
+            unsafe {
+                aio::io_submit(
+                    inner_context.context,
+                    1,
+                    request_ptr_array.as_mut_ptr() as *mut *mut aio::iocb,
+                )
             }
+        };
+
+        if result != 1 {
+            // we need to take back the request when io_submit failed
+            let buf = request.inner.lock().take_locked_buf();
+            inner_context
+                .requests
+                .lock()
+                .return_in_flight_to_ready(request);
+            inner_context.capacity.add_permits(1);
+
+            return Err(AioCommandError::IoSubmit {
+                err: io::Error::last_os_error(),
+                buf,
+            });
         }
 
-        let code = base.await?;
+        let base = AioWaitFuture::new(&inner_context, rx, request);
+
+        let (code, buf) = base.await?;
 
         if code < 0 {
-            Err(AioCommandError::BadResult(io::Error::from_raw_os_error(
-                -code as _,
-            )))
+            Err(AioCommandError::BadResult {
+                buf,
+                err: io::Error::from_raw_os_error(-code as _),
+            })
         } else {
-            Ok(code)
+            Ok((code, buf))
         }
     }
 }
@@ -221,12 +238,16 @@ pub fn aio_context(nr: usize) -> Result<(AioContext, AioContextHandle), AioConte
                 };
 
                 for event in &events {
-                    let ptr = event.data as usize as *mut Request;
+                    let request_ptr = event.data as usize as *mut Request;
 
-                    let sent_succeeded = unsafe { &*ptr }.send_to_waiter(event.res);
+                    let sent_succeeded = unsafe { &*request_ptr }.send_to_waiter(event.res);
 
                     if !sent_succeeded {
-                        inner.requests.lock().return_outstanding_to_ready(ptr);
+                        mem::drop(unsafe { &*request_ptr }.inner.lock().take_locked_buf());
+                        inner
+                            .requests
+                            .lock()
+                            .return_outstanding_to_ready(request_ptr);
                         inner.capacity.add_permits(1)
                     }
                 }

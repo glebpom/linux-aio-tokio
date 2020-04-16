@@ -27,13 +27,15 @@ async fn main() {
         write_buf.as_mut()[i] = (i % 0xff) as u8;
     }
 
-    file.write_at(&aio_handle, 0, &write_buf, WriteFlags::APPEND)
+    let (_, write_buf) = file
+        .write_at(&aio_handle, 0, write_buf, WriteFlags::APPEND)
         .await
         .unwrap();
 
-    let mut read_buf = LockedBuf::with_size(1024).unwrap();
+    let read_buf = LockedBuf::with_size(1024).unwrap();
 
-    file.read_at(&aio_handle, 0, &mut read_buf, ReadFlags::empty())
+    let (_, read_buf) = file
+        .read_at(&aio_handle, 0, read_buf, ReadFlags::empty())
         .await
         .unwrap();
 

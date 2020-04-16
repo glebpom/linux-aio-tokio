@@ -77,23 +77,21 @@ impl File {
         &self,
         aio_handle: &AioContextHandle,
         offset: u64,
-        buffer: &mut LockedBuf,
+        buffer: LockedBuf,
         flags: ReadFlags,
-    ) -> Result<AioResult, AioCommandError> {
-        let (ptr, len) = buffer.aio_addr_and_len();
-
+    ) -> Result<(AioResult, LockedBuf), AioCommandError> {
         aio_handle
             .submit_request(
                 self,
                 RawCommand {
                     opcode: Opcode::Pread,
                     offset,
-                    len,
-                    buf: ptr,
+                    buf: Some(buffer),
                     flags: flags.bits() as _,
                 },
             )
             .await
+            .map(|(code, buf)| (code, buf.unwrap()))
     }
 
     /// Write to the file through AIO at `offset` from the [`buffer`] with provided [`flags`].
@@ -104,23 +102,21 @@ impl File {
         &self,
         aio_handle: &AioContextHandle,
         offset: u64,
-        buffer: &LockedBuf,
+        buffer: LockedBuf,
         flags: WriteFlags,
-    ) -> Result<AioResult, AioCommandError> {
-        let (ptr, len) = buffer.aio_addr_and_len();
-
+    ) -> Result<(AioResult, LockedBuf), AioCommandError> {
         aio_handle
             .submit_request(
                 self,
                 RawCommand {
                     opcode: Opcode::Pwrite,
                     offset,
-                    len,
-                    buf: ptr as u64,
+                    buf: Some(buffer),
                     flags: flags.bits() as _,
                 },
             )
             .await
+            .map(|(code, buf)| (code, buf.unwrap()))
     }
 
     /// Sync data and metadata through AIO
@@ -133,13 +129,13 @@ impl File {
                 self,
                 RawCommand {
                     opcode: Opcode::Fsync,
-                    buf: 0,
-                    len: 0,
+                    buf: None,
                     offset: 0,
                     flags: 0,
                 },
             )
             .await
+            .map(|(res, _)| res)
     }
 
     /// Sync only data through AIO
@@ -152,13 +148,13 @@ impl File {
                 self,
                 RawCommand {
                     opcode: Opcode::Fdsync,
-                    buf: 0,
-                    len: 0,
+                    buf: None,
                     offset: 0,
                     flags: 0,
                 },
             )
             .await
+            .map(|(res, _)| res)
     }
 }
 
