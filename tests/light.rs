@@ -1,3 +1,4 @@
+use std::error::Error;
 use std::fs::{OpenOptions, Permissions};
 use std::io::{Read, Seek, SeekFrom};
 use std::mem;
@@ -227,7 +228,13 @@ async fn invalid_offset() {
 
     assert!(res.is_err());
 
-    assert!(res.err().unwrap().take_buf().is_some());
+    let mut error = res.err().unwrap();
+
+    assert!(error.take_buf().is_some());
+    assert_eq!(
+        "Invalid argument (os error 22)",
+        error.source().unwrap().to_string()
+    );
 
     dir.close().unwrap();
 }

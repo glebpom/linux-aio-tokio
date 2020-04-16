@@ -18,19 +18,19 @@ pub enum AioCommandError {
     /// Error from [`io_submit`]
     ///
     /// [`io_submit`]: https://manpages.debian.org/testing/manpages-dev/io_submit.2.en.html
-    #[error("io_submit error: {err}")]
+    #[error("io_submit error: {source}")]
     IoSubmit {
         /// Error
-        err: io::Error,
+        source: io::Error,
         /// LockedBuf
         buf: Option<LockedBuf>,
     },
 
     /// Bad result received
-    #[error("bad result: `{err}`")]
+    #[error("bad result: `{source}`")]
     BadResult {
         /// Error
-        err: io::Error,
+        source: io::Error,
         /// LockedBuf
         buf: Option<LockedBuf>,
     },

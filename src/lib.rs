@@ -169,7 +169,7 @@ impl AioContextHandle {
             inner_context.capacity.add_permits(1);
 
             return Err(AioCommandError::IoSubmit {
-                err: io::Error::last_os_error(),
+                source: io::Error::last_os_error(),
                 buf,
             });
         }
@@ -181,7 +181,7 @@ impl AioContextHandle {
         if code < 0 {
             Err(AioCommandError::BadResult {
                 buf,
-                err: io::Error::from_raw_os_error(-code as _),
+                source: io::Error::from_raw_os_error(-code as _),
             })
         } else {
             Ok((code, buf))

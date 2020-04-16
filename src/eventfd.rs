@@ -15,11 +15,11 @@ use tokio::io::PollEvented;
 #[derive(Error, Debug)]
 pub enum EventFdError {
     #[error("error creating EventFd: `{0}`")]
-    CreateError(io::Error),
+    CreateError(#[source] io::Error),
     #[error("Poll error: `{0}`")]
-    PollError(io::Error),
+    PollError(#[source] io::Error),
     #[error("Read error: `{0}`")]
-    ReadError(io::Error),
+    ReadError(#[source] io::Error),
 }
 
 pub struct EventFdInner {
