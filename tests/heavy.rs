@@ -48,17 +48,19 @@ async fn load_test() {
             loop {
                 let page = thread_rng().gen_range(0, NUM_PAGES);
 
-                assert_eq!(
-                    PAGE_SIZE,
-                    file.read_at(
+                let res = file
+                    .read_at(
                         &aio_handle,
                         (page * PAGE_SIZE) as u64,
-                        &mut buffer,
-                        ReadFlags::empty()
+                        buffer,
+                        ReadFlags::empty(),
                     )
                     .await
-                    .unwrap() as usize
-                );
+                    .unwrap();
+
+                buffer = res.1;
+
+                assert_eq!(PAGE_SIZE, res.0 as usize);
             }
         }));
     }
@@ -77,17 +79,19 @@ async fn load_test() {
                 let page = thread_rng().gen_range(0, NUM_PAGES);
                 thread_rng().fill(buffer.as_mut());
 
-                assert_eq!(
-                    PAGE_SIZE,
-                    file.write_at(
+                let res = file
+                    .write_at(
                         &aio_handle,
                         (page * PAGE_SIZE) as u64,
-                        &mut buffer,
+                        buffer,
                         WriteFlags::DSYNC,
                     )
                     .await
-                    .unwrap() as usize,
-                );
+                    .unwrap();
+
+                buffer = res.1;
+
+                assert_eq!(PAGE_SIZE, res.0 as usize,);
             }
         }));
     }

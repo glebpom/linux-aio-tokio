@@ -1,4 +1,4 @@
-use crate::aio;
+use crate::{aio, LockedBuf};
 
 /// Represents AIO operation. See [`io_submit`](https://manpages.debian.org/testing/manpages-dev/io_submit.2.en.html)
 #[derive(Copy, Clone, Debug)]
@@ -31,7 +31,7 @@ impl Opcode {
 }
 
 /// Raw AIO command
-#[derive(Copy, Clone, Debug)]
+#[derive(Debug)]
 pub struct RawCommand {
     /// Operation
     pub opcode: Opcode,
@@ -39,13 +39,8 @@ pub struct RawCommand {
     /// Offset in the file
     pub offset: u64,
 
-    /// Pointer to the [`LockedBuf`] in the memory, converted to `u64`
-    ///
-    /// [`LockedBuf`]: struct.LockedBuf.html
-    pub buf: u64,
-
-    /// Buffer length
-    pub len: u64,
+    /// Optional buffer
+    pub buf: Option<LockedBuf>,
 
     /// ReadFlags or WriteFlags, depending on the operation
     pub flags: u32,
