@@ -33,7 +33,9 @@ jobs:
         - stable
       before_script:
         - (test -x $HOME/.cargo/bin/cargo-cache || cargo install cargo-cache)
-      script: cargo build
+      script:
+        - cargo build
+        - cargo test --test light
     - env: []
       cache:
         directories:

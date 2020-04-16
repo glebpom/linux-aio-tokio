@@ -1,47 +1,28 @@
 use std::fs::{OpenOptions, Permissions};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Read, Seek, SeekFrom};
 use std::mem;
 use std::os::unix::prelude::*;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use futures::channel::oneshot;
 use futures::future::join_all;
-use futures::stream::FuturesUnordered;
-use futures::{select_biased, FutureExt, StreamExt};
-use tempfile::{tempdir, TempDir};
+use futures::{select_biased, FutureExt};
 use tokio::time::delay_for;
 
 use assert_matches::assert_matches;
+use helpers::*;
 use linux_aio_tokio::{aio_context, AioCommandError, LockedBuf, ReadFlags, WriteFlags};
 use linux_aio_tokio::{AioOpenOptionsExt, File};
+
+pub mod helpers;
 
 const FILE_SIZE: usize = 1024 * 512;
 const BUF_CAPACITY: usize = 8192;
 
-fn fill_temp_file(file: &mut std::fs::File) {
-    let mut data = [0u8; FILE_SIZE];
-
-    for index in 0..data.len() {
-        data[index] = index as u8;
-    }
-
-    file.write(&data).unwrap();
-    file.sync_all().unwrap();
-}
-
-fn create_filled_tempfile() -> (TempDir, PathBuf) {
-    let dir = tempdir().unwrap();
-    let path = dir.path().join("tmp");
-    let mut temp_file = std::fs::File::create(dir.path().join("tmp")).unwrap();
-    fill_temp_file(&mut temp_file);
-    (dir, path)
-}
-
 #[tokio::test]
 async fn aio_close() {
-    let (dir, path) = create_filled_tempfile();
+    let (dir, path) = create_filled_tempfile(FILE_SIZE);
 
     let (aio, aio_handle) = aio_context(10).unwrap();
     let file = File::open(&path, false).await.unwrap();
@@ -63,7 +44,7 @@ async fn aio_close() {
 
 #[tokio::test]
 async fn file_open_and_meta() {
-    let (dir, path) = create_filled_tempfile();
+    let (dir, path) = create_filled_tempfile(FILE_SIZE);
 
     let file = File::open(&path, false).await.unwrap();
 
@@ -92,7 +73,7 @@ async fn file_open_and_meta() {
 
 #[tokio::test]
 async fn file_create_and_set_len() {
-    let (dir, path) = create_filled_tempfile();
+    let (dir, path) = create_filled_tempfile(FILE_SIZE);
 
     let mut file = File::create(&path, false).await.unwrap();
 
@@ -117,7 +98,7 @@ async fn file_create_and_set_len() {
 
 #[tokio::test(threaded_scheduler)]
 async fn read_block_mt() {
-    let (dir, path) = create_filled_tempfile();
+    let (dir, path) = create_filled_tempfile(FILE_SIZE);
 
     let mut open_options = OpenOptions::new();
     open_options.read(true).write(true);
@@ -142,7 +123,7 @@ async fn read_block_mt() {
 
 #[tokio::test(threaded_scheduler)]
 async fn write_block_mt() {
-    let (dir, path) = create_filled_tempfile();
+    let (dir, path) = create_filled_tempfile(FILE_SIZE);
 
     {
         let mut open_options = OpenOptions::new();
@@ -174,7 +155,7 @@ async fn write_block_mt() {
 
 #[tokio::test(threaded_scheduler)]
 async fn write_block_sync_mt() {
-    let (dir, path) = create_filled_tempfile();
+    let (dir, path) = create_filled_tempfile(FILE_SIZE);
 
     {
         let mut open_options = OpenOptions::new();
@@ -230,7 +211,7 @@ async fn write_block_sync_mt() {
 
 #[tokio::test(threaded_scheduler)]
 async fn invalid_offset() {
-    let (dir, path) = create_filled_tempfile();
+    let (dir, path) = create_filled_tempfile(FILE_SIZE);
 
     let buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
 
@@ -251,7 +232,7 @@ async fn invalid_offset() {
 
 #[tokio::test(basic_scheduler)]
 async fn future_cancellation() {
-    let (dir, path) = create_filled_tempfile();
+    let (dir, path) = create_filled_tempfile(FILE_SIZE);
 
     let buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
 
@@ -289,56 +270,8 @@ async fn future_cancellation() {
 }
 
 #[tokio::test(threaded_scheduler)]
-async fn read_many_blocks_mt() {
-    let (dir, path) = create_filled_tempfile();
-
-    let mut open_options = OpenOptions::new();
-    open_options.read(true).write(true);
-
-    let file = Arc::new(open_options.aio_open(path.clone(), true).await.unwrap());
-
-    let num_slots = 7;
-    let (aio, aio_handle) = aio_context(num_slots).unwrap();
-
-    // 50 waves of requests just going above the limit
-
-    // Waves start here
-    for _wave in 0u64..50 {
-        let f = FuturesUnordered::new();
-        let aio_handle = aio_handle.clone();
-        let file = file.clone();
-
-        // Each wave makes 100 I/O requests
-        for index in 0u64..100 {
-            let file = file.clone();
-            let aio_handle = aio_handle.clone();
-
-            f.push(async move {
-                let offset = (index * BUF_CAPACITY as u64) % FILE_SIZE as u64;
-                let buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
-
-                let (_, buffer) = file
-                    .read_at(&aio_handle, offset, buffer, ReadFlags::empty())
-                    .await
-                    .unwrap();
-
-                assert!(validate_block(buffer.as_ref()));
-            });
-        }
-
-        let _ = f.collect::<Vec<_>>().await;
-
-        // all slots have been returned
-        assert_eq!(num_slots, aio.available_slots());
-    }
-
-    dir.close().unwrap();
-}
-
-// A test with a mixed read/write workload
-#[tokio::test(threaded_scheduler)]
 async fn mixed_read_write_at() {
-    let (dir, path) = create_filled_tempfile();
+    let (dir, path) = create_filled_tempfile(FILE_SIZE);
 
     let mut open_options = OpenOptions::new();
     open_options.read(true).write(true);
@@ -490,35 +423,4 @@ async fn mixed_read_write_at() {
     .unwrap();
 
     dir.close().unwrap();
-}
-
-fn fill_pattern(key: u8, buffer: &mut [u8]) {
-    assert_eq!(buffer.len() % 2, 0);
-
-    for index in 0..buffer.len() / 2 {
-        buffer[index * 2] = key;
-        buffer[index * 2 + 1] = index as u8;
-    }
-}
-
-fn validate_pattern(key: u8, buffer: &[u8]) -> bool {
-    assert_eq!(buffer.len() % 2, 0);
-
-    for index in 0..buffer.len() / 2 {
-        if (buffer[index * 2] != key) || (buffer[index * 2 + 1] != (index as u8)) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-fn validate_block(data: &[u8]) -> bool {
-    for index in 0..data.len() {
-        if data[index] != index as u8 {
-            return false;
-        }
-    }
-
-    true
 }
