@@ -227,6 +227,8 @@ async fn invalid_offset() {
 
     assert!(res.is_err());
 
+    assert!(res.err().unwrap().take_buf().is_some());
+
     dir.close().unwrap();
 }
 
