@@ -36,6 +36,19 @@ pub enum AioCommandError {
     },
 }
 
+impl AioCommandError {
+    /// Take LockedBuf out of the error
+    pub fn take_buf(&mut self) -> Option<LockedBuf> {
+        use AioCommandError::*;
+
+        match self {
+            AioStopped { buf, .. } => buf.take(),
+            IoSubmit { buf, .. } => buf.take(),
+            BadResult { buf, .. } => buf.take(),
+        }
+    }
+}
+
 /// AIO context creation error
 #[derive(Error, Debug)]
 pub enum AioContextError {
