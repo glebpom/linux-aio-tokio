@@ -3,11 +3,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures::future::join_all;
-use futures::{pin_mut, select, FutureExt};
+use futures::stream::FuturesUnordered;
+use futures::{pin_mut, select, FutureExt, StreamExt};
 use rand::{thread_rng, Rng};
 use tempfile::tempdir;
 use tokio::time::delay_for;
 
+use helpers::*;
 use linux_aio_tokio::AioOpenOptionsExt;
 use linux_aio_tokio::{aio_context, LockedBuf, ReadFlags, WriteFlags};
 
@@ -17,6 +19,8 @@ const NUM_PAGES: usize = 256;
 const NUM_READERS: usize = 256;
 const NUM_WRITERS: usize = 4;
 const NUM_AIO_THREADS: usize = 4;
+
+pub mod helpers;
 
 #[tokio::test(threaded_scheduler)]
 async fn load_test() {
@@ -110,6 +114,56 @@ async fn load_test() {
         _ = timeout => {
             assert!(true);
         },
+    }
+
+    dir.close().unwrap();
+}
+
+#[tokio::test(threaded_scheduler)]
+async fn read_many_blocks_mt() {
+    const FILE_SIZE: usize = 1024 * 512;
+    const BUF_CAPACITY: usize = 8192;
+
+    let (dir, path) = create_filled_tempfile(FILE_SIZE);
+
+    let mut open_options = OpenOptions::new();
+    open_options.read(true).write(true);
+
+    let file = Arc::new(open_options.aio_open(path.clone(), true).await.unwrap());
+
+    let num_slots = 7;
+    let (aio, aio_handle) = aio_context(num_slots).unwrap();
+
+    // 50 waves of requests just going above the limit
+
+    // Waves start here
+    for _wave in 0u64..50 {
+        let f = FuturesUnordered::new();
+        let aio_handle = aio_handle.clone();
+        let file = file.clone();
+
+        // Each wave makes 100 I/O requests
+        for index in 0u64..100 {
+            let file = file.clone();
+            let aio_handle = aio_handle.clone();
+
+            f.push(async move {
+                let offset = (index * BUF_CAPACITY as u64) % FILE_SIZE as u64;
+                let buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
+
+                let (_, buffer) = file
+                    .read_at(&aio_handle, offset, buffer, ReadFlags::empty())
+                    .await
+                    .unwrap();
+
+                assert!(validate_block(buffer.as_ref()));
+            });
+        }
+
+        let _ = f.collect::<Vec<_>>().await;
+
+        // all slots have been returned
+        assert_eq!(num_slots, aio.available_slots());
     }
 
     dir.close().unwrap();

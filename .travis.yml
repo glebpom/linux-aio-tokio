@@ -1,6 +1,23 @@
+stages:
+  - basic
+  - cross
 jobs:
   include:
-    - env: []
+    - env:
+        - NAME=test
+      cache:
+        directories:
+          - /home/travis/.cargo
+      rust:
+        - stable
+      before_script:
+        - (test -x $HOME/.cargo/bin/cargo-cache || cargo install cargo-cache)
+      script:
+        - cargo build
+        - cargo test --test light
+      stage: basic
+    - env:
+        - NAME=checks
       cache:
         directories:
           - /home/travis/.cargo
@@ -13,7 +30,9 @@ jobs:
       script:
         - cargo fmt --all -- --check
         - cargo clippy
-    - env: []
+      stage: basic
+    - env:
+        - NAME=docs
       cache:
         directories:
           - /home/travis/.cargo
@@ -25,16 +44,9 @@ jobs:
       script:
         - cargo doc
         - cargo deadlinks
-    - env: []
-      cache:
-        directories:
-          - /home/travis/.cargo
-      rust:
-        - stable
-      before_script:
-        - (test -x $HOME/.cargo/bin/cargo-cache || cargo install cargo-cache)
-      script: cargo build
-    - env: []
+      stage: basic
+    - env:
+        - NAME=build-beta
       cache:
         directories:
           - /home/travis/.cargo
@@ -43,7 +55,8 @@ jobs:
       before_script:
         - (test -x $HOME/.cargo/bin/cargo-cache || cargo install cargo-cache)
       script: cargo build
-    - env: []
+    - env:
+        - NAME=build-nightly
       cache:
         directories:
           - /home/travis/.cargo
@@ -52,7 +65,7 @@ jobs:
       before_script:
         - (test -x $HOME/.cargo/bin/cargo-cache || cargo install cargo-cache)
       script: cargo build
-
+      stage: basic
 language: rust
 cache:
   directories:
@@ -74,3 +87,4 @@ env:
   - TARGET=mipsel-unknown-linux-gnu
   - TARGET=mipsel-unknown-linux-musl
 script: ./ci/test-target.sh $TARGET
+stage: cross
