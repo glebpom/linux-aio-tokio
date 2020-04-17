@@ -56,15 +56,13 @@ async fn load_test() {
                     .read_at(
                         &aio_handle,
                         (page * PAGE_SIZE) as u64,
-                        buffer,
+                        &mut buffer,
                         ReadFlags::empty(),
                     )
                     .await
                     .unwrap();
 
-                buffer = res.1;
-
-                assert_eq!(PAGE_SIZE, res.0 as usize);
+                assert_eq!(PAGE_SIZE, res as usize);
             }
         }));
     }
@@ -87,15 +85,13 @@ async fn load_test() {
                     .write_at(
                         &aio_handle,
                         (page * PAGE_SIZE) as u64,
-                        buffer,
+                        &buffer,
                         WriteFlags::DSYNC,
                     )
                     .await
                     .unwrap();
 
-                buffer = res.1;
-
-                assert_eq!(PAGE_SIZE, res.0 as usize,);
+                assert_eq!(PAGE_SIZE, res as usize);
             }
         }));
     }
@@ -149,10 +145,9 @@ async fn read_many_blocks_mt() {
 
             f.push(async move {
                 let offset = (index * BUF_CAPACITY as u64) % FILE_SIZE as u64;
-                let buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
+                let mut buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
 
-                let (_, buffer) = file
-                    .read_at(&aio_handle, offset, buffer, ReadFlags::empty())
+                file.read_at(&aio_handle, offset, &mut buffer, ReadFlags::empty())
                     .await
                     .unwrap();
 

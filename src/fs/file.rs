@@ -5,7 +5,7 @@ use std::{fmt, io};
 
 use crate::errors::AioCommandError;
 use crate::fs::AioOpenOptionsExt;
-use crate::{AioContextHandle, AioResult, LockedBuf, Opcode, RawCommand, ReadFlags, WriteFlags};
+use crate::{AioContextHandle, AioResult, LockedBuf, RawCommand, ReadFlags, WriteFlags};
 
 /// AIO version of tokio [`File`], to work through [`AioContextHandle`]
 ///
@@ -77,21 +77,19 @@ impl File {
         &self,
         aio_handle: &AioContextHandle,
         offset: u64,
-        buffer: LockedBuf,
+        buffer: &mut LockedBuf,
         flags: ReadFlags,
-    ) -> Result<(AioResult, LockedBuf), AioCommandError> {
+    ) -> Result<AioResult, AioCommandError> {
         aio_handle
             .submit_request(
                 self,
-                RawCommand {
-                    opcode: Opcode::Pread,
+                RawCommand::Pread {
                     offset,
-                    buf: Some(buffer),
-                    flags: flags.bits() as _,
+                    buffer,
+                    flags,
                 },
             )
             .await
-            .map(|(code, buf)| (code, buf.unwrap()))
     }
 
     /// Write to the file through AIO at `offset` from the [`buffer`] with provided [`flags`].
@@ -102,21 +100,19 @@ impl File {
         &self,
         aio_handle: &AioContextHandle,
         offset: u64,
-        buffer: LockedBuf,
+        buffer: &LockedBuf,
         flags: WriteFlags,
-    ) -> Result<(AioResult, LockedBuf), AioCommandError> {
+    ) -> Result<AioResult, AioCommandError> {
         aio_handle
             .submit_request(
                 self,
-                RawCommand {
-                    opcode: Opcode::Pwrite,
+                RawCommand::Pwrite {
                     offset,
-                    buf: Some(buffer),
-                    flags: flags.bits() as _,
+                    buffer,
+                    flags,
                 },
             )
             .await
-            .map(|(code, buf)| (code, buf.unwrap()))
     }
 
     /// Sync data and metadata through AIO
@@ -124,18 +120,7 @@ impl File {
         &self,
         aio_handle: &AioContextHandle,
     ) -> Result<AioResult, AioCommandError> {
-        aio_handle
-            .submit_request(
-                self,
-                RawCommand {
-                    opcode: Opcode::Fsync,
-                    buf: None,
-                    offset: 0,
-                    flags: 0,
-                },
-            )
-            .await
-            .map(|(res, _)| res)
+        aio_handle.submit_request(self, RawCommand::Fsync).await
     }
 
     /// Sync only data through AIO
@@ -143,18 +128,7 @@ impl File {
         &self,
         aio_handle: &AioContextHandle,
     ) -> Result<AioResult, AioCommandError> {
-        aio_handle
-            .submit_request(
-                self,
-                RawCommand {
-                    opcode: Opcode::Fdsync,
-                    buf: None,
-                    offset: 0,
-                    flags: 0,
-                },
-            )
-            .await
-            .map(|(res, _)| res)
+        aio_handle.submit_request(self, RawCommand::Fdsync).await
     }
 }
 
