@@ -78,8 +78,10 @@ impl File {
         aio_handle: &AioContextHandle,
         offset: u64,
         buffer: &mut LockedBuf,
+        len: u64,
         flags: ReadFlags,
     ) -> Result<AioResult, AioCommandError> {
+        assert!(len <= buffer.size() as u64);
         aio_handle
             .submit_request(
                 self,
@@ -87,6 +89,7 @@ impl File {
                     offset,
                     buffer,
                     flags,
+                    len,
                 },
             )
             .await
@@ -101,8 +104,10 @@ impl File {
         aio_handle: &AioContextHandle,
         offset: u64,
         buffer: &LockedBuf,
+        len: u64,
         flags: WriteFlags,
     ) -> Result<AioResult, AioCommandError> {
+        assert!(len <= buffer.size() as u64);
         aio_handle
             .submit_request(
                 self,
@@ -110,6 +115,7 @@ impl File {
                     offset,
                     buffer,
                     flags,
+                    len,
                 },
             )
             .await

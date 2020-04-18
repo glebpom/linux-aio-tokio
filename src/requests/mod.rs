@@ -58,7 +58,10 @@ impl Request {
     ) {
         let inner = &mut *self.inner.lock();
 
-        let (addr, len) = command.buffer_addr().unwrap_or((0, 0));
+        let (addr, buf_len) = command.buffer_addr().unwrap_or((0, 0));
+        let len = command.len().unwrap_or(0);
+
+        assert!(len <= buf_len as u64, "len should be <= buffer.size()");
 
         inner.aio_req.aio_data = request_addr;
         inner.aio_req.aio_resfd = eventfd as u32;

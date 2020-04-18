@@ -13,6 +13,8 @@ pub enum RawCommand<'a> {
         buffer: &'a mut LockedBuf,
         /// Read flags
         flags: ReadFlags,
+        /// Optional len
+        len: u64,
     },
 
     /// Write
@@ -24,6 +26,8 @@ pub enum RawCommand<'a> {
 
         /// Write flags
         flags: WriteFlags,
+        /// Optional len
+        len: u64,
     },
 
     /// Sync data only
@@ -51,6 +55,17 @@ impl<'a> RawCommand<'a> {
         match *self {
             Pread { offset, .. } => Some(offset),
             Pwrite { offset, .. } => Some(offset),
+            Fdsync => None,
+            Fsync => None,
+        }
+    }
+
+    pub(crate) fn len(&self) -> Option<u64> {
+        use RawCommand::*;
+
+        match *self {
+            Pread { len, .. } => Some(len),
+            Pwrite { len, .. } => Some(len),
             Fdsync => None,
             Fsync => None,
         }

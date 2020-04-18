@@ -27,10 +27,11 @@ minor version is released. Consider using the fixed version to prevent compilati
 ## Examples
 
 ```rust
+use std::fs::OpenOptions;
+
 use tempfile::tempdir;
 
 use linux_aio_tokio::{aio_context, AioOpenOptionsExt, LockedBuf, ReadFlags, WriteFlags};
-use std::fs::OpenOptions;
 
 #[tokio::main]
 async fn main() {
@@ -56,15 +57,13 @@ async fn main() {
         write_buf.as_mut()[i] = (i % 0xff) as u8;
     }
 
-    file
-        .write_at(&aio_handle, 0, &write_buf, WriteFlags::APPEND)
+    file.write_at(&aio_handle, 0, &write_buf, 1024, WriteFlags::APPEND)
         .await
         .unwrap();
 
     let mut read_buf = LockedBuf::with_size(1024).unwrap();
 
-    file
-        .read_at(&aio_handle, 0, &mut read_buf, ReadFlags::empty())
+    file.read_at(&aio_handle, 0, &mut read_buf, 1024, ReadFlags::empty())
         .await
         .unwrap();
 
