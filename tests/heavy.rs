@@ -57,6 +57,7 @@ async fn load_test() {
                         &aio_handle,
                         (page * PAGE_SIZE) as u64,
                         &mut buffer,
+                        PAGE_SIZE as _,
                         ReadFlags::empty(),
                     )
                     .await
@@ -86,6 +87,7 @@ async fn load_test() {
                         &aio_handle,
                         (page * PAGE_SIZE) as u64,
                         &buffer,
+                        PAGE_SIZE as _,
                         WriteFlags::DSYNC,
                     )
                     .await
@@ -147,9 +149,15 @@ async fn read_many_blocks_mt() {
                 let offset = (index * BUF_CAPACITY as u64) % FILE_SIZE as u64;
                 let mut buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
 
-                file.read_at(&aio_handle, offset, &mut buffer, ReadFlags::empty())
-                    .await
-                    .unwrap();
+                file.read_at(
+                    &aio_handle,
+                    offset,
+                    &mut buffer,
+                    BUF_CAPACITY as _,
+                    ReadFlags::empty(),
+                )
+                .await
+                .unwrap();
 
                 assert!(validate_block(buffer.as_ref()));
             });

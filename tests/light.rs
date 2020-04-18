@@ -32,10 +32,16 @@ async fn aio_close() {
     aio.close().await;
 
     assert_matches!(
-        file.read_at(&aio_handle, 0, &mut buffer, ReadFlags::empty())
-            .await
-            .err()
-            .unwrap(),
+        file.read_at(
+            &aio_handle,
+            0,
+            &mut buffer,
+            BUF_CAPACITY as _,
+            ReadFlags::empty()
+        )
+        .await
+        .err()
+        .unwrap(),
         AioCommandError::AioStopped
     );
 
@@ -52,13 +58,25 @@ async fn file_open_and_meta() {
 
     let (_aio, aio_handle) = aio_context(10).unwrap();
 
-    file.read_at(&aio_handle, 0, &mut buffer, ReadFlags::empty())
-        .await
-        .unwrap();
+    file.read_at(
+        &aio_handle,
+        0,
+        &mut buffer,
+        BUF_CAPACITY as _,
+        ReadFlags::empty(),
+    )
+    .await
+    .unwrap();
     assert!(validate_block(buffer.as_ref()));
 
     assert!(file
-        .write_at(&aio_handle, 0, &mut buffer, WriteFlags::empty())
+        .write_at(
+            &aio_handle,
+            0,
+            &mut buffer,
+            BUF_CAPACITY as _,
+            WriteFlags::empty()
+        )
         .await
         .is_err());
 
@@ -82,12 +100,24 @@ async fn file_create_and_set_len() {
 
     let (_aio, aio_handle) = aio_context(10).unwrap();
 
-    file.write_at(&aio_handle, 0, &buffer, WriteFlags::empty())
-        .await
-        .unwrap();
+    file.write_at(
+        &aio_handle,
+        0,
+        &buffer,
+        BUF_CAPACITY as _,
+        WriteFlags::empty(),
+    )
+    .await
+    .unwrap();
 
     assert!(file
-        .read_at(&aio_handle, 0, &mut buffer, ReadFlags::empty())
+        .read_at(
+            &aio_handle,
+            0,
+            &mut buffer,
+            BUF_CAPACITY as _,
+            ReadFlags::empty()
+        )
         .await
         .is_err());
 
@@ -103,17 +133,55 @@ async fn read_block_mt() {
 
     let file = Arc::new(open_options.aio_open(path.clone(), true).await.unwrap());
 
-    let mut buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
+    let mut buffer = LockedBuf::with_size(BUF_CAPACITY * 2).unwrap();
 
     let (aio, aio_handle) = aio_context(10).unwrap();
 
-    file.read_at(&aio_handle, 0, &mut buffer, ReadFlags::empty())
+    let read_bytes = file
+        .read_at(
+            &aio_handle,
+            0,
+            &mut buffer,
+            BUF_CAPACITY as _,
+            ReadFlags::empty(),
+        )
         .await
         .unwrap();
 
-    assert!(validate_block(buffer.as_ref()));
+    assert_eq!(read_bytes, BUF_CAPACITY as i64);
+
+    assert!(validate_block(&buffer.as_ref()[..BUF_CAPACITY]));
 
     assert_eq!(10, aio.available_slots());
+
+    dir.close().unwrap();
+}
+
+#[tokio::test]
+#[should_panic]
+async fn panic_on_wrong_len() {
+    let (dir, path) = create_filled_tempfile(FILE_SIZE);
+
+    {
+        let mut open_options = OpenOptions::new();
+        open_options.read(true).write(true);
+
+        let file = open_options.aio_open(path.clone(), true).await.unwrap();
+
+        let mut buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
+
+        let (_aio, aio_handle) = aio_context(1).unwrap();
+
+        file.read_at(
+            &aio_handle,
+            0,
+            &mut buffer,
+            (BUF_CAPACITY + 1) as _,
+            ReadFlags::empty(),
+        )
+        .await
+        .unwrap();
+    }
 
     dir.close().unwrap();
 }
@@ -128,62 +196,51 @@ async fn write_block_mt() {
 
         let file = Arc::new(open_options.aio_open(path.clone(), true).await.unwrap());
 
-        let mut buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
-        fill_pattern(65u8, buffer.as_mut());
-
-        let (_aio, aio_handle) = aio_context(10).unwrap();
-
-        file.write_at(&aio_handle, 16384, &buffer, WriteFlags::DSYNC)
-            .await
-            .unwrap();
-    }
-
-    let mut file = std::fs::File::open(&path).unwrap();
-
-    file.seek(SeekFrom::Start(16384)).unwrap();
-
-    let mut read_buffer: [u8; BUF_CAPACITY] = [0u8; BUF_CAPACITY];
-    file.read(&mut read_buffer).unwrap();
-
-    assert!(validate_pattern(65u8, &read_buffer));
-
-    dir.close().unwrap();
-}
-
-#[tokio::test(threaded_scheduler)]
-async fn write_block_sync_mt() {
-    let (dir, path) = create_filled_tempfile(FILE_SIZE);
-
-    {
-        let mut open_options = OpenOptions::new();
-        open_options.read(true).write(true);
-
-        let file = Arc::new(open_options.aio_open(path.clone(), true).await.unwrap());
-
         let (_aio, aio_handle) = aio_context(2).unwrap();
 
         {
-            let mut buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
+            let mut buffer = LockedBuf::with_size(BUF_CAPACITY * 2).unwrap();
             fill_pattern(65u8, buffer.as_mut());
-            file.write_at(&aio_handle, 16384, &buffer, WriteFlags::DSYNC)
+            let wrote_bytes = file
+                .write_at(
+                    &aio_handle,
+                    16384,
+                    &buffer,
+                    BUF_CAPACITY as _,
+                    WriteFlags::DSYNC,
+                )
                 .await
                 .unwrap();
+
+            assert_eq!(BUF_CAPACITY, wrote_bytes as usize);
         }
 
         {
             let mut buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
             fill_pattern(66u8, buffer.as_mut());
-            file.write_at(&aio_handle, 32768, &buffer, WriteFlags::DSYNC)
-                .await
-                .unwrap();
+            file.write_at(
+                &aio_handle,
+                32768,
+                &buffer,
+                BUF_CAPACITY as _,
+                WriteFlags::empty(),
+            )
+            .await
+            .unwrap();
         }
 
         {
             let mut buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
             fill_pattern(67u8, buffer.as_mut());
-            file.write_at(&aio_handle, 49152, &buffer, WriteFlags::DSYNC)
-                .await
-                .unwrap();
+            file.write_at(
+                &aio_handle,
+                49152,
+                &buffer,
+                BUF_CAPACITY as _,
+                WriteFlags::SYNC,
+            )
+            .await
+            .unwrap();
         }
     }
 
@@ -219,7 +276,13 @@ async fn invalid_offset() {
 
     let (_aio, aio_handle) = aio_context(10).unwrap();
     let res = file
-        .read_at(&aio_handle, 1000000, &mut buffer, ReadFlags::empty())
+        .read_at(
+            &aio_handle,
+            1000000,
+            &mut buffer,
+            BUF_CAPACITY as _,
+            ReadFlags::empty(),
+        )
         .await;
 
     assert!(res.is_err());
@@ -242,8 +305,14 @@ async fn future_cancellation() {
 
     let (aio, aio_handle) = aio_context(num_slots).unwrap();
     let mut read = Box::pin(
-        file.read_at(&aio_handle, 0, &mut buffer, ReadFlags::empty())
-            .fuse(),
+        file.read_at(
+            &aio_handle,
+            0,
+            &mut buffer,
+            BUF_CAPACITY as _,
+            ReadFlags::empty(),
+        )
+        .fuse(),
     );
 
     let (_, immediate) = oneshot::channel::<()>();
@@ -284,34 +353,70 @@ async fn mixed_read_write_at() {
         async move {
             let mut buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
 
-            file.read_at(&aio_handle, 8192, &mut buffer, ReadFlags::empty())
-                .await
-                .unwrap();
+            file.read_at(
+                &aio_handle,
+                8192,
+                &mut buffer,
+                BUF_CAPACITY as _,
+                ReadFlags::empty(),
+            )
+            .await
+            .unwrap();
             assert!(validate_block(buffer.as_ref()));
 
             fill_pattern(0u8, buffer.as_mut());
-            file.write_at(&aio_handle, 8192, &buffer, WriteFlags::DSYNC)
-                .await
-                .unwrap();
+            file.write_at(
+                &aio_handle,
+                8192,
+                &buffer,
+                BUF_CAPACITY as _,
+                WriteFlags::DSYNC,
+            )
+            .await
+            .unwrap();
 
-            file.read_at(&aio_handle, 0, &mut buffer, ReadFlags::empty())
-                .await
-                .unwrap();
+            file.read_at(
+                &aio_handle,
+                0,
+                &mut buffer,
+                BUF_CAPACITY as _,
+                ReadFlags::empty(),
+            )
+            .await
+            .unwrap();
             assert!(validate_block(buffer.as_ref()));
 
             fill_pattern(1u8, buffer.as_mut());
-            file.write_at(&aio_handle, 0, &buffer, WriteFlags::DSYNC)
-                .await
-                .unwrap();
+            file.write_at(
+                &aio_handle,
+                0,
+                &buffer,
+                BUF_CAPACITY as _,
+                WriteFlags::DSYNC,
+            )
+            .await
+            .unwrap();
 
-            file.read_at(&aio_handle, 8192, &mut buffer, ReadFlags::empty())
-                .await
-                .unwrap();
+            file.read_at(
+                &aio_handle,
+                8192,
+                &mut buffer,
+                BUF_CAPACITY as _,
+                ReadFlags::empty(),
+            )
+            .await
+            .unwrap();
             assert!(validate_pattern(0u8, buffer.as_ref()));
 
-            file.read_at(&aio_handle, 0, &mut buffer, ReadFlags::empty())
-                .await
-                .unwrap();
+            file.read_at(
+                &aio_handle,
+                0,
+                &mut buffer,
+                BUF_CAPACITY as _,
+                ReadFlags::empty(),
+            )
+            .await
+            .unwrap();
             assert!(validate_pattern(1u8, buffer.as_ref()));
         }
     };
@@ -323,34 +428,70 @@ async fn mixed_read_write_at() {
         async move {
             let mut buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
 
-            file.read_at(&aio_handle, 16384, &mut buffer, ReadFlags::empty())
-                .await
-                .unwrap();
+            file.read_at(
+                &aio_handle,
+                16384,
+                &mut buffer,
+                BUF_CAPACITY as _,
+                ReadFlags::empty(),
+            )
+            .await
+            .unwrap();
             assert!(validate_block(buffer.as_ref()));
 
             fill_pattern(2u8, buffer.as_mut());
-            file.write_at(&aio_handle, 16384, &buffer, WriteFlags::DSYNC)
-                .await
-                .unwrap();
+            file.write_at(
+                &aio_handle,
+                16384,
+                &buffer,
+                BUF_CAPACITY as _,
+                WriteFlags::DSYNC,
+            )
+            .await
+            .unwrap();
 
-            file.read_at(&aio_handle, 24576, &mut buffer, ReadFlags::empty())
-                .await
-                .unwrap();
+            file.read_at(
+                &aio_handle,
+                24576,
+                &mut buffer,
+                BUF_CAPACITY as _,
+                ReadFlags::empty(),
+            )
+            .await
+            .unwrap();
             assert!(validate_block(buffer.as_ref()));
 
             fill_pattern(3, buffer.as_mut());
-            file.write_at(&aio_handle, 24576, &buffer, WriteFlags::DSYNC)
-                .await
-                .unwrap();
+            file.write_at(
+                &aio_handle,
+                24576,
+                &buffer,
+                BUF_CAPACITY as _,
+                WriteFlags::DSYNC,
+            )
+            .await
+            .unwrap();
 
-            file.read_at(&aio_handle, 16384, &mut buffer, ReadFlags::empty())
-                .await
-                .unwrap();
+            file.read_at(
+                &aio_handle,
+                16384,
+                &mut buffer,
+                BUF_CAPACITY as _,
+                ReadFlags::empty(),
+            )
+            .await
+            .unwrap();
             assert!(validate_pattern(2, buffer.as_ref()));
 
-            file.read_at(&aio_handle, 24576, &mut buffer, ReadFlags::empty())
-                .await
-                .unwrap();
+            file.read_at(
+                &aio_handle,
+                24576,
+                &mut buffer,
+                BUF_CAPACITY as _,
+                ReadFlags::empty(),
+            )
+            .await
+            .unwrap();
             assert!(validate_pattern(3u8, buffer.as_ref()));
         }
     };
@@ -359,34 +500,70 @@ async fn mixed_read_write_at() {
         async move {
             let mut buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
 
-            file.read_at(&aio_handle, 40960, &mut buffer, ReadFlags::empty())
-                .await
-                .unwrap();
+            file.read_at(
+                &aio_handle,
+                40960,
+                &mut buffer,
+                BUF_CAPACITY as _,
+                ReadFlags::empty(),
+            )
+            .await
+            .unwrap();
             assert!(validate_block(buffer.as_ref()));
 
             fill_pattern(5u8, buffer.as_mut());
-            file.write_at(&aio_handle, 40960, &buffer, WriteFlags::DSYNC)
-                .await
-                .unwrap();
+            file.write_at(
+                &aio_handle,
+                40960,
+                &buffer,
+                BUF_CAPACITY as _,
+                WriteFlags::DSYNC,
+            )
+            .await
+            .unwrap();
 
-            file.read_at(&aio_handle, 32768, &mut buffer, ReadFlags::empty())
-                .await
-                .unwrap();
+            file.read_at(
+                &aio_handle,
+                32768,
+                &mut buffer,
+                BUF_CAPACITY as _,
+                ReadFlags::empty(),
+            )
+            .await
+            .unwrap();
             assert!(validate_block(buffer.as_ref()));
 
             fill_pattern(6, buffer.as_mut());
-            file.write_at(&aio_handle, 32768, &buffer, WriteFlags::DSYNC)
-                .await
-                .unwrap();
+            file.write_at(
+                &aio_handle,
+                32768,
+                &buffer,
+                BUF_CAPACITY as _,
+                WriteFlags::DSYNC,
+            )
+            .await
+            .unwrap();
 
-            file.read_at(&aio_handle, 40960, &mut buffer, ReadFlags::empty())
-                .await
-                .unwrap();
+            file.read_at(
+                &aio_handle,
+                40960,
+                &mut buffer,
+                BUF_CAPACITY as _,
+                ReadFlags::empty(),
+            )
+            .await
+            .unwrap();
             assert!(validate_pattern(5, buffer.as_ref()));
 
-            file.read_at(&aio_handle, 32768, &mut buffer, ReadFlags::empty())
-                .await
-                .unwrap();
+            file.read_at(
+                &aio_handle,
+                32768,
+                &mut buffer,
+                BUF_CAPACITY as _,
+                ReadFlags::empty(),
+            )
+            .await
+            .unwrap();
             assert!(validate_pattern(6, buffer.as_ref()));
         }
     };
