@@ -19,6 +19,10 @@ Add this to your `Cargo.toml`:
     [dependencies]
     linux-aio-tokio = "0.2"
 
+## Stability
+
+Versions `0.2.x` are considered unstable and under active development. The API may change between patch versions, until the next
+minor version is released. Consider using the fixed version to prevent compilation errors.
 
 ## Examples
 
@@ -52,15 +56,15 @@ async fn main() {
         write_buf.as_mut()[i] = (i % 0xff) as u8;
     }
 
-    let (_, write_buf) = file
-        .write_at(&aio_handle, 0, write_buf, WriteFlags::APPEND)
+    file
+        .write_at(&aio_handle, 0, &write_buf, WriteFlags::APPEND)
         .await
         .unwrap();
 
-    let read_buf = LockedBuf::with_size(1024).unwrap();
+    let mut read_buf = LockedBuf::with_size(1024).unwrap();
 
-    let (_, read_buf) = file
-        .read_at(&aio_handle, 0, read_buf, ReadFlags::empty())
+    file
+        .read_at(&aio_handle, 0, &mut read_buf, ReadFlags::empty())
         .await
         .unwrap();
 

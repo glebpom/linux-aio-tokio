@@ -7,9 +7,8 @@ use futures::{ready, Future};
 
 use crate::errors::AioCommandError;
 use crate::requests::Request;
-use crate::{AioContextInner, AioResult, LockedBuf};
-
-pub(crate) type WaitResult = (AioResult, Option<LockedBuf>);
+use crate::{AioContextInner, AioResult};
+use std::mem;
 
 pub(crate) struct AioWaitFuture {
     rx: oneshot::Receiver<AioResult>,
@@ -18,15 +17,14 @@ pub(crate) struct AioWaitFuture {
 }
 
 impl AioWaitFuture {
-    fn return_request_to_pool_and_take_locked_buf(&mut self) -> Option<LockedBuf> {
+    fn return_request_to_pool(&mut self) {
         let req = self.request.take().unwrap();
-        let locked_buf = req.inner.lock().take_locked_buf();
+        mem::drop(req.inner.lock().take_buf_lifetime_extender());
         self.inner_context
             .requests
             .lock()
             .return_in_flight_to_ready(req);
         self.inner_context.capacity.add_permits(1);
-        locked_buf
     }
 
     pub fn new(
@@ -43,14 +41,14 @@ impl AioWaitFuture {
 }
 
 impl Future for AioWaitFuture {
-    type Output = Result<WaitResult, AioCommandError>;
+    type Output = Result<AioResult, AioCommandError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let res = ready!(Pin::new(&mut self.rx).poll(cx))
             .expect("AIO stopped while AioWaitFuture was not completed");
-        let buf = self.return_request_to_pool_and_take_locked_buf();
+        self.return_request_to_pool();
 
-        Poll::Ready(Ok((res, buf)))
+        Poll::Ready(Ok(res))
     }
 }
 
@@ -60,7 +58,7 @@ impl Drop for AioWaitFuture {
 
         if self.rx.try_recv().is_ok() {
             // the sender have successfully sent data to the channel, but we didn't accept it
-            self.return_request_to_pool_and_take_locked_buf();
+            self.return_request_to_pool();
         }
 
         if let Some(in_flight) = self.request.take() {

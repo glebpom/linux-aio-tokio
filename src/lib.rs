@@ -120,14 +120,12 @@ impl AioContextHandle {
     pub async fn submit_request(
         &self,
         fd: impl AsRawFd,
-        mut command: RawCommand,
-    ) -> Result<(AioResult, Option<LockedBuf>), AioCommandError> {
+        mut command: RawCommand<'_>,
+    ) -> Result<AioResult, AioCommandError> {
         let inner_context = self
             .inner
             .upgrade()
-            .ok_or_else(|| AioCommandError::AioStopped {
-                buf: command.buf.take(),
-            })?
+            .ok_or_else(|| AioCommandError::AioStopped)?
             .clone();
 
         inner_context.capacity.acquire().await.forget();
@@ -160,31 +158,26 @@ impl AioContextHandle {
         };
 
         if result != 1 {
-            // we need to take back the request when io_submit failed
-            let buf = request.inner.lock().take_locked_buf();
+            mem::drop(request.inner.lock().take_buf_lifetime_extender());
             inner_context
                 .requests
                 .lock()
                 .return_in_flight_to_ready(request);
             inner_context.capacity.add_permits(1);
 
-            return Err(AioCommandError::IoSubmit {
-                source: io::Error::last_os_error(),
-                buf,
-            });
+            return Err(AioCommandError::IoSubmit(io::Error::last_os_error()));
         }
 
         let base = AioWaitFuture::new(&inner_context, rx, request);
 
-        let (code, buf) = base.await?;
+        let code = base.await?;
 
         if code < 0 {
-            Err(AioCommandError::BadResult {
-                buf,
-                source: io::Error::from_raw_os_error(-code as _),
-            })
+            Err(AioCommandError::BadResult(io::Error::from_raw_os_error(
+                -code as _,
+            )))
         } else {
-            Ok((code, buf))
+            Ok(code)
         }
     }
 }
@@ -243,7 +236,12 @@ pub fn aio_context(nr: usize) -> Result<(AioContext, AioContextHandle), AioConte
                     let sent_succeeded = unsafe { &*request_ptr }.send_to_waiter(event.res);
 
                     if !sent_succeeded {
-                        mem::drop(unsafe { &*request_ptr }.inner.lock().take_locked_buf());
+                        mem::drop(
+                            unsafe { &*request_ptr }
+                                .inner
+                                .lock()
+                                .take_buf_lifetime_extender(),
+                        );
                         inner
                             .requests
                             .lock()

@@ -3,50 +3,23 @@ use std::io;
 use thiserror::Error;
 
 use crate::eventfd::EventFdError;
-use crate::LockedBuf;
 
 /// AIO command error
 #[derive(Error, Debug)]
 pub enum AioCommandError {
     /// AIO context was stopped
     #[error("AioContext stopped")]
-    AioStopped {
-        /// LockedBuf
-        buf: Option<LockedBuf>,
-    },
+    AioStopped,
 
     /// Error from [`io_submit`]
     ///
     /// [`io_submit`]: https://manpages.debian.org/testing/manpages-dev/io_submit.2.en.html
-    #[error("io_submit error: {source}")]
-    IoSubmit {
-        /// Error
-        source: io::Error,
-        /// LockedBuf
-        buf: Option<LockedBuf>,
-    },
+    #[error("io_submit error: {0}")]
+    IoSubmit(#[source] io::Error),
 
     /// Bad result received
-    #[error("bad result: `{source}`")]
-    BadResult {
-        /// Error
-        source: io::Error,
-        /// LockedBuf
-        buf: Option<LockedBuf>,
-    },
-}
-
-impl AioCommandError {
-    /// Take LockedBuf out of the error
-    pub fn take_buf(&mut self) -> Option<LockedBuf> {
-        use AioCommandError::*;
-
-        match self {
-            AioStopped { buf, .. } => buf.take(),
-            IoSubmit { buf, .. } => buf.take(),
-            BadResult { buf, .. } => buf.take(),
-        }
-    }
+    #[error("bad result: `{0}`")]
+    BadResult(#[source] io::Error),
 }
 
 /// AIO context creation error

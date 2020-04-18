@@ -1,4 +1,3 @@
-use std::error::Error;
 use std::fs::{OpenOptions, Permissions};
 use std::io::{Read, Seek, SeekFrom};
 use std::mem;
@@ -28,16 +27,16 @@ async fn aio_close() {
     let (aio, aio_handle) = aio_context(10).unwrap();
     let file = File::open(&path, false).await.unwrap();
 
-    let buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
+    let mut buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
 
     aio.close().await;
 
     assert_matches!(
-        file.read_at(&aio_handle, 0, buffer, ReadFlags::empty())
+        file.read_at(&aio_handle, 0, &mut buffer, ReadFlags::empty())
             .await
             .err()
             .unwrap(),
-        AioCommandError::AioStopped { .. }
+        AioCommandError::AioStopped
     );
 
     dir.close().unwrap();
@@ -49,18 +48,17 @@ async fn file_open_and_meta() {
 
     let file = File::open(&path, false).await.unwrap();
 
-    let buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
+    let mut buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
 
     let (_aio, aio_handle) = aio_context(10).unwrap();
 
-    let (_, buffer) = file
-        .read_at(&aio_handle, 0, buffer, ReadFlags::empty())
+    file.read_at(&aio_handle, 0, &mut buffer, ReadFlags::empty())
         .await
         .unwrap();
     assert!(validate_block(buffer.as_ref()));
 
     assert!(file
-        .write_at(&aio_handle, 0, buffer, WriteFlags::empty())
+        .write_at(&aio_handle, 0, &mut buffer, WriteFlags::empty())
         .await
         .is_err());
 
@@ -80,17 +78,16 @@ async fn file_create_and_set_len() {
 
     file.set_len(BUF_CAPACITY as u64).await.unwrap();
 
-    let buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
+    let mut buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
 
     let (_aio, aio_handle) = aio_context(10).unwrap();
 
-    let (_, buffer) = file
-        .write_at(&aio_handle, 0, buffer, WriteFlags::empty())
+    file.write_at(&aio_handle, 0, &buffer, WriteFlags::empty())
         .await
         .unwrap();
 
     assert!(file
-        .read_at(&aio_handle, 0, buffer, ReadFlags::empty())
+        .read_at(&aio_handle, 0, &mut buffer, ReadFlags::empty())
         .await
         .is_err());
 
@@ -106,12 +103,11 @@ async fn read_block_mt() {
 
     let file = Arc::new(open_options.aio_open(path.clone(), true).await.unwrap());
 
-    let buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
+    let mut buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
 
     let (aio, aio_handle) = aio_context(10).unwrap();
 
-    let (_, buffer) = file
-        .read_at(&aio_handle, 0, buffer, ReadFlags::empty())
+    file.read_at(&aio_handle, 0, &mut buffer, ReadFlags::empty())
         .await
         .unwrap();
 
@@ -137,7 +133,7 @@ async fn write_block_mt() {
 
         let (_aio, aio_handle) = aio_context(10).unwrap();
 
-        file.write_at(&aio_handle, 16384, buffer, WriteFlags::DSYNC)
+        file.write_at(&aio_handle, 16384, &buffer, WriteFlags::DSYNC)
             .await
             .unwrap();
     }
@@ -169,7 +165,7 @@ async fn write_block_sync_mt() {
         {
             let mut buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
             fill_pattern(65u8, buffer.as_mut());
-            file.write_at(&aio_handle, 16384, buffer, WriteFlags::DSYNC)
+            file.write_at(&aio_handle, 16384, &buffer, WriteFlags::DSYNC)
                 .await
                 .unwrap();
         }
@@ -177,7 +173,7 @@ async fn write_block_sync_mt() {
         {
             let mut buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
             fill_pattern(66u8, buffer.as_mut());
-            file.write_at(&aio_handle, 32768, buffer, WriteFlags::DSYNC)
+            file.write_at(&aio_handle, 32768, &buffer, WriteFlags::DSYNC)
                 .await
                 .unwrap();
         }
@@ -185,7 +181,7 @@ async fn write_block_sync_mt() {
         {
             let mut buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
             fill_pattern(67u8, buffer.as_mut());
-            file.write_at(&aio_handle, 49152, buffer, WriteFlags::DSYNC)
+            file.write_at(&aio_handle, 49152, &buffer, WriteFlags::DSYNC)
                 .await
                 .unwrap();
         }
@@ -214,7 +210,7 @@ async fn write_block_sync_mt() {
 async fn invalid_offset() {
     let (dir, path) = create_filled_tempfile(FILE_SIZE);
 
-    let buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
+    let mut buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
 
     let mut open_options = OpenOptions::new();
     open_options.read(true).write(true);
@@ -223,18 +219,10 @@ async fn invalid_offset() {
 
     let (_aio, aio_handle) = aio_context(10).unwrap();
     let res = file
-        .read_at(&aio_handle, 1000000, buffer, ReadFlags::empty())
+        .read_at(&aio_handle, 1000000, &mut buffer, ReadFlags::empty())
         .await;
 
     assert!(res.is_err());
-
-    let mut error = res.err().unwrap();
-
-    assert!(error.take_buf().is_some());
-    assert_eq!(
-        "Invalid argument (os error 22)",
-        error.source().unwrap().to_string()
-    );
 
     dir.close().unwrap();
 }
@@ -243,7 +231,7 @@ async fn invalid_offset() {
 async fn future_cancellation() {
     let (dir, path) = create_filled_tempfile(FILE_SIZE);
 
-    let buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
+    let mut buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
 
     let mut open_options = OpenOptions::new();
     open_options.read(true).write(true);
@@ -254,7 +242,7 @@ async fn future_cancellation() {
 
     let (aio, aio_handle) = aio_context(num_slots).unwrap();
     let mut read = Box::pin(
-        file.read_at(&aio_handle, 0, buffer, ReadFlags::empty())
+        file.read_at(&aio_handle, 0, &mut buffer, ReadFlags::empty())
             .fuse(),
     );
 
@@ -294,40 +282,34 @@ async fn mixed_read_write_at() {
         let aio_handle = aio_handle.clone();
 
         async move {
-            let buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
+            let mut buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
 
-            let (_, mut buffer) = file
-                .read_at(&aio_handle, 8192, buffer, ReadFlags::empty())
+            file.read_at(&aio_handle, 8192, &mut buffer, ReadFlags::empty())
                 .await
                 .unwrap();
             assert!(validate_block(buffer.as_ref()));
 
             fill_pattern(0u8, buffer.as_mut());
-            let (_, buffer) = file
-                .write_at(&aio_handle, 8192, buffer, WriteFlags::DSYNC)
+            file.write_at(&aio_handle, 8192, &buffer, WriteFlags::DSYNC)
                 .await
                 .unwrap();
 
-            let (_, mut buffer) = file
-                .read_at(&aio_handle, 0, buffer, ReadFlags::empty())
+            file.read_at(&aio_handle, 0, &mut buffer, ReadFlags::empty())
                 .await
                 .unwrap();
             assert!(validate_block(buffer.as_ref()));
 
             fill_pattern(1u8, buffer.as_mut());
-            let (_, buffer) = file
-                .write_at(&aio_handle, 0, buffer, WriteFlags::DSYNC)
+            file.write_at(&aio_handle, 0, &buffer, WriteFlags::DSYNC)
                 .await
                 .unwrap();
 
-            let (_, buffer) = file
-                .read_at(&aio_handle, 8192, buffer, ReadFlags::empty())
+            file.read_at(&aio_handle, 8192, &mut buffer, ReadFlags::empty())
                 .await
                 .unwrap();
             assert!(validate_pattern(0u8, buffer.as_ref()));
 
-            let (_, buffer) = file
-                .read_at(&aio_handle, 0, buffer, ReadFlags::empty())
+            file.read_at(&aio_handle, 0, &mut buffer, ReadFlags::empty())
                 .await
                 .unwrap();
             assert!(validate_pattern(1u8, buffer.as_ref()));
@@ -339,40 +321,34 @@ async fn mixed_read_write_at() {
         let aio_handle = aio_handle.clone();
 
         async move {
-            let buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
+            let mut buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
 
-            let (_, mut buffer) = file
-                .read_at(&aio_handle, 16384, buffer, ReadFlags::empty())
+            file.read_at(&aio_handle, 16384, &mut buffer, ReadFlags::empty())
                 .await
                 .unwrap();
             assert!(validate_block(buffer.as_ref()));
 
             fill_pattern(2u8, buffer.as_mut());
-            let (_, buffer) = file
-                .write_at(&aio_handle, 16384, buffer, WriteFlags::DSYNC)
+            file.write_at(&aio_handle, 16384, &buffer, WriteFlags::DSYNC)
                 .await
                 .unwrap();
 
-            let (_, mut buffer) = file
-                .read_at(&aio_handle, 24576, buffer, ReadFlags::empty())
+            file.read_at(&aio_handle, 24576, &mut buffer, ReadFlags::empty())
                 .await
                 .unwrap();
             assert!(validate_block(buffer.as_ref()));
 
             fill_pattern(3, buffer.as_mut());
-            let (_, buffer) = file
-                .write_at(&aio_handle, 24576, buffer, WriteFlags::DSYNC)
+            file.write_at(&aio_handle, 24576, &buffer, WriteFlags::DSYNC)
                 .await
                 .unwrap();
 
-            let (_, buffer) = file
-                .read_at(&aio_handle, 16384, buffer, ReadFlags::empty())
+            file.read_at(&aio_handle, 16384, &mut buffer, ReadFlags::empty())
                 .await
                 .unwrap();
             assert!(validate_pattern(2, buffer.as_ref()));
 
-            let (_, buffer) = file
-                .read_at(&aio_handle, 24576, buffer, ReadFlags::empty())
+            file.read_at(&aio_handle, 24576, &mut buffer, ReadFlags::empty())
                 .await
                 .unwrap();
             assert!(validate_pattern(3u8, buffer.as_ref()));
@@ -381,40 +357,34 @@ async fn mixed_read_write_at() {
 
     let seq3 = {
         async move {
-            let buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
+            let mut buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
 
-            let (_, mut buffer) = file
-                .read_at(&aio_handle, 40960, buffer, ReadFlags::empty())
+            file.read_at(&aio_handle, 40960, &mut buffer, ReadFlags::empty())
                 .await
                 .unwrap();
             assert!(validate_block(buffer.as_ref()));
 
             fill_pattern(5u8, buffer.as_mut());
-            let (_, buffer) = file
-                .write_at(&aio_handle, 40960, buffer, WriteFlags::DSYNC)
+            file.write_at(&aio_handle, 40960, &buffer, WriteFlags::DSYNC)
                 .await
                 .unwrap();
 
-            let (_, mut buffer) = file
-                .read_at(&aio_handle, 32768, buffer, ReadFlags::empty())
+            file.read_at(&aio_handle, 32768, &mut buffer, ReadFlags::empty())
                 .await
                 .unwrap();
             assert!(validate_block(buffer.as_ref()));
 
             fill_pattern(6, buffer.as_mut());
-            let (_, buffer) = file
-                .write_at(&aio_handle, 32768, buffer, WriteFlags::DSYNC)
+            file.write_at(&aio_handle, 32768, &buffer, WriteFlags::DSYNC)
                 .await
                 .unwrap();
 
-            let (_, buffer) = file
-                .read_at(&aio_handle, 40960, buffer, ReadFlags::empty())
+            file.read_at(&aio_handle, 40960, &mut buffer, ReadFlags::empty())
                 .await
                 .unwrap();
             assert!(validate_pattern(5, buffer.as_ref()));
 
-            let (_, buffer) = file
-                .read_at(&aio_handle, 32768, buffer, ReadFlags::empty())
+            file.read_at(&aio_handle, 32768, &mut buffer, ReadFlags::empty())
                 .await
                 .unwrap();
             assert!(validate_pattern(6, buffer.as_ref()));

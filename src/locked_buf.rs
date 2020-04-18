@@ -1,4 +1,6 @@
+use std::cell::UnsafeCell;
 use std::mem::ManuallyDrop;
+use std::sync::Arc;
 use std::{fmt, io, mem};
 
 use memmap::MmapMut;
@@ -18,13 +20,17 @@ pub enum LockedBufError {
     MemLock(#[from] region::Error),
 }
 
+struct LockedBufInner {
+    bytes: ManuallyDrop<MmapMut>,
+    mlock_guard: ManuallyDrop<region::LockGuard>,
+}
+
 /// Buffer with fixed capacity, locked to RAM. It prevents
 /// memory from being paged to the swap area
 ///
 /// This is required to work with AIO operations.
 pub struct LockedBuf {
-    bytes: ManuallyDrop<MmapMut>,
-    mlock_guard: ManuallyDrop<region::LockGuard>,
+    inner: Arc<UnsafeCell<LockedBufInner>>,
 }
 
 impl fmt::Debug for LockedBuf {
@@ -35,6 +41,16 @@ impl fmt::Debug for LockedBuf {
     }
 }
 
+pub(crate) struct LifetimeExtender {
+    _inner: Arc<UnsafeCell<LockedBufInner>>,
+}
+
+impl fmt::Debug for LifetimeExtender {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("LifetimeExtender").finish()
+    }
+}
+
 impl LockedBuf {
     /// Create with desired capacity
     pub fn with_size(size: usize) -> Result<LockedBuf, LockedBufError> {
@@ -42,36 +58,47 @@ impl LockedBuf {
         let mlock_guard = region::lock(bytes.as_ref().as_ptr(), size)?;
 
         Ok(LockedBuf {
-            bytes: ManuallyDrop::new(bytes),
-            mlock_guard: ManuallyDrop::new(mlock_guard),
+            inner: Arc::new(UnsafeCell::new(LockedBufInner {
+                bytes: ManuallyDrop::new(bytes),
+                mlock_guard: ManuallyDrop::new(mlock_guard),
+            })),
         })
     }
 
     /// Return current capacity
     pub fn size(&self) -> usize {
-        self.bytes.len()
+        unsafe { &*self.inner.get() }.bytes.len()
     }
 
     pub(crate) fn aio_addr_and_len(&self) -> (u64, u64) {
-        let len = self.bytes.len() as u64;
-        let ptr = unsafe { mem::transmute::<_, usize>(self.bytes.as_ptr()) } as u64;
+        let len = unsafe { &*self.inner.get() }.bytes.len() as u64;
+        let ptr = unsafe { mem::transmute::<_, usize>((*self.inner.get()).bytes.as_ptr()) } as u64;
         (ptr, len)
+    }
+
+    /// Handle, which prevents LockedBuf to drop while request is in-flight
+    pub(crate) fn lifetime_extender(&self) -> LifetimeExtender {
+        LifetimeExtender {
+            _inner: self.inner.clone(),
+        }
     }
 }
 
 impl AsRef<[u8]> for LockedBuf {
     fn as_ref(&self) -> &[u8] {
-        self.bytes.as_ref()
+        let inner = unsafe { &*self.inner.get() };
+        inner.bytes.as_ref()
     }
 }
 
 impl AsMut<[u8]> for LockedBuf {
     fn as_mut(&mut self) -> &mut [u8] {
-        self.bytes.as_mut()
+        let inner = unsafe { &mut *self.inner.get() };
+        inner.bytes.as_mut()
     }
 }
 
-impl Drop for LockedBuf {
+impl Drop for LockedBufInner {
     fn drop(&mut self) {
         unsafe {
             ManuallyDrop::drop(&mut self.mlock_guard);
@@ -79,3 +106,8 @@ impl Drop for LockedBuf {
         }
     }
 }
+
+unsafe impl Send for LockedBuf {}
+unsafe impl Sync for LockedBuf {}
+
+unsafe impl Send for LifetimeExtender {}

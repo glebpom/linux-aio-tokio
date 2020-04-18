@@ -6,9 +6,9 @@ use std::{io, mem};
 use futures::channel::oneshot;
 use intrusive_collections::{intrusive_adapter, LinkedList};
 
+use crate::locked_buf::LifetimeExtender;
 use crate::requests::atomic_link::AtomicLink;
-use crate::{aio, LockedBuf};
-use crate::{AioResult, RawCommand};
+use crate::{aio, AioResult, RawCommand};
 use parking_lot::Mutex;
 
 mod atomic_link;
@@ -17,12 +17,12 @@ mod atomic_link;
 pub(crate) struct RequestInner {
     pub aio_req: aio::iocb,
     pub completed_tx: Option<oneshot::Sender<AioResult>>,
-    pub locked_buf: Option<LockedBuf>,
+    pub buf_lifetime_extender: Option<LifetimeExtender>,
 }
 
 impl RequestInner {
-    pub(crate) fn take_locked_buf(&mut self) -> Option<LockedBuf> {
-        self.locked_buf.take()
+    pub(crate) fn take_buf_lifetime_extender(&mut self) -> Option<LifetimeExtender> {
+        self.buf_lifetime_extender.take()
     }
 }
 
@@ -58,22 +58,18 @@ impl Request {
     ) {
         let inner = &mut *self.inner.lock();
 
-        let (ptr, len) = command
-            .buf
-            .as_ref()
-            .map(|buf| buf.aio_addr_and_len())
-            .unwrap_or((0, 0));
+        let (addr, len) = command.buffer_addr().unwrap_or((0, 0));
 
         inner.aio_req.aio_data = request_addr;
         inner.aio_req.aio_resfd = eventfd as u32;
-        inner.aio_req.aio_flags = aio::IOCB_FLAG_RESFD | command.flags;
+        inner.aio_req.aio_flags = aio::IOCB_FLAG_RESFD | command.flags().unwrap_or(0);
         inner.aio_req.aio_fildes = fd as u32;
-        inner.aio_req.aio_offset = command.offset as i64;
-        inner.aio_req.aio_buf = ptr;
+        inner.aio_req.aio_offset = command.offset().unwrap_or(0) as i64;
+        inner.aio_req.aio_buf = addr;
         inner.aio_req.aio_nbytes = len;
-        inner.aio_req.aio_lio_opcode = command.opcode.aio_const() as u16;
+        inner.aio_req.aio_lio_opcode = command.opcode() as u16;
 
-        inner.locked_buf = command.buf.take();
+        inner.buf_lifetime_extender = command.buffer_lifetime_extender();
         inner.completed_tx = Some(tx);
 
         request_ptr_array[0] = &mut inner.aio_req as *mut aio::iocb;
@@ -98,7 +94,7 @@ impl Requests {
                 inner: Mutex::new(RequestInner {
                     aio_req: unsafe { mem::zeroed() },
                     completed_tx: None,
-                    locked_buf: None,
+                    buf_lifetime_extender: None,
                 }),
             }));
         }
