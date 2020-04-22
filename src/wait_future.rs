@@ -24,7 +24,7 @@ impl AioWaitFuture {
             .requests
             .lock()
             .return_in_flight_to_ready(req);
-        self.inner_context.capacity.add_permits(1);
+        self.inner_context.capacity.release(1);
     }
 
     pub fn new(

@@ -18,8 +18,8 @@ use std::{fmt, io, mem};
 
 use futures::channel::oneshot;
 use futures::{pin_mut, select, FutureExt, StreamExt};
+use futures_intrusive::sync::Semaphore;
 use parking_lot::Mutex;
-use tokio::sync::Semaphore;
 use tokio::task;
 
 pub use commands::*;
@@ -69,7 +69,7 @@ impl AioContextInner {
         Ok(AioContextInner {
             context,
             requests: Mutex::new(Requests::new(nr)?),
-            capacity: Semaphore::new(nr),
+            capacity: Semaphore::new(true, nr),
             eventfd,
             stop_tx: Mutex::new(Some(stop_tx)),
             num_slots: nr,
@@ -113,7 +113,7 @@ pub struct AioContextHandle {
 impl AioContextHandle {
     /// Number of available AIO slots left in the context
     pub fn available_slots(&self) -> Option<usize> {
-        self.inner.upgrade().map(|i| i.capacity.available_permits())
+        self.inner.upgrade().map(|i| i.capacity.permits())
     }
 
     /// Submit command to the AIO context
@@ -128,7 +128,7 @@ impl AioContextHandle {
             .ok_or_else(|| AioCommandError::AioStopped)?
             .clone();
 
-        inner_context.capacity.acquire().await.forget();
+        inner_context.capacity.acquire(1).await.disarm();
 
         let mut request = inner_context.requests.lock().take();
 
@@ -163,7 +163,7 @@ impl AioContextHandle {
                 .requests
                 .lock()
                 .return_in_flight_to_ready(request);
-            inner_context.capacity.add_permits(1);
+            inner_context.capacity.release(1);
 
             return Err(AioCommandError::IoSubmit(io::Error::last_os_error()));
         }
@@ -246,7 +246,7 @@ pub fn aio_context(nr: usize) -> Result<(AioContext, AioContextHandle), AioConte
                             .requests
                             .lock()
                             .return_outstanding_to_ready(request_ptr);
-                        inner.capacity.add_permits(1)
+                        inner.capacity.release(1)
                     }
                 }
             }
@@ -275,7 +275,7 @@ pub fn aio_context(nr: usize) -> Result<(AioContext, AioContextHandle), AioConte
 impl AioContext {
     /// Number of available AIO slots left in the context
     pub fn available_slots(&self) -> usize {
-        self.inner.capacity.available_permits()
+        self.inner.capacity.permits()
     }
 
     /// Close the AIO context and wait for all related running futures to complete.
