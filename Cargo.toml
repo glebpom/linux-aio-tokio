@@ -13,7 +13,7 @@ edition = "2018"
 build = "build/build.rs"
 
 [dependencies]
-tokio = { version = "0.2.18", features = ["io-driver", "sync", "fs"] }
+tokio = { version = "0.2.18", features = ["io-driver", "fs"] }
 futures = "0.3"
 mio = "0.6.21"
 libc = "0.2"
@@ -25,6 +25,7 @@ memmap = "0.7.0"
 region = "2.1.2"
 async-trait = "0.1.30"
 bitflags = "1.2.1"
+futures-intrusive = "0.3"
 
 [dev-dependencies]
 tokio = { version = "0.2", features = ["macros", "rt-core", "rt-threaded", "time"] }
