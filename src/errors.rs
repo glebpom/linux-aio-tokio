@@ -20,6 +20,10 @@ pub enum AioCommandError {
     /// Bad result received
     #[error("bad result: `{0}`")]
     BadResult(#[source] io::Error),
+
+    /// Non-zero length returned
+    #[error("non-zero code returned")]
+    NonZeroCode,
 }
 
 /// AIO context creation error

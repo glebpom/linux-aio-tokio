@@ -148,7 +148,7 @@ async fn read_block_mt() {
         .await
         .unwrap();
 
-    assert_eq!(read_bytes, BUF_CAPACITY as i64);
+    assert_eq!(read_bytes, BUF_CAPACITY as u64);
 
     assert!(validate_block(&buffer.as_ref()[..BUF_CAPACITY]));
 
