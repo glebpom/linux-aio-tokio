@@ -11,6 +11,7 @@
 //! calls to perform file I/O. [Linux kernel-level AIO](http://lse.sourceforge.net/io/aio.html), on the
 //! other hand, provides kernel-level asynchronous scheduling of I/O operations to the underlying block device.
 
+use std::convert::TryInto;
 use std::os::unix::prelude::*;
 use std::ptr;
 use std::sync::{Arc, Weak};
@@ -119,9 +120,9 @@ impl AioContextHandle {
     /// Submit command to the AIO context
     pub async fn submit_request(
         &self,
-        fd: impl AsRawFd,
+        fd: &impl AsRawFd,
         mut command: RawCommand<'_>,
-    ) -> Result<AioResult, AioCommandError> {
+    ) -> Result<u64, AioCommandError> {
         let inner_context = self
             .inner
             .upgrade()
@@ -177,7 +178,7 @@ impl AioContextHandle {
                 -code as _,
             )))
         } else {
-            Ok(code)
+            Ok(code.try_into().unwrap())
         }
     }
 }

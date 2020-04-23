@@ -5,7 +5,7 @@ use std::{fmt, io};
 
 use crate::errors::AioCommandError;
 use crate::fs::AioOpenOptionsExt;
-use crate::{AioContextHandle, AioResult, LockedBuf, RawCommand, ReadFlags, WriteFlags};
+use crate::{AioContextHandle, LockedBuf, RawCommand, ReadFlags, WriteFlags};
 
 /// AIO version of tokio [`File`], to work through [`AioContextHandle`]
 ///
@@ -80,7 +80,7 @@ impl File {
         buffer: &mut LockedBuf,
         len: u64,
         flags: ReadFlags,
-    ) -> Result<AioResult, AioCommandError> {
+    ) -> Result<u64, AioCommandError> {
         assert!(len <= buffer.size() as u64);
         aio_handle
             .submit_request(
@@ -106,7 +106,7 @@ impl File {
         buffer: &LockedBuf,
         len: u64,
         flags: WriteFlags,
-    ) -> Result<AioResult, AioCommandError> {
+    ) -> Result<u64, AioCommandError> {
         assert!(len <= buffer.size() as u64);
         aio_handle
             .submit_request(
@@ -122,19 +122,21 @@ impl File {
     }
 
     /// Sync data and metadata through AIO
-    pub async fn sync_all(
-        &self,
-        aio_handle: &AioContextHandle,
-    ) -> Result<AioResult, AioCommandError> {
-        aio_handle.submit_request(self, RawCommand::Fsync).await
+    pub async fn sync_all(&self, aio_handle: &AioContextHandle) -> Result<(), AioCommandError> {
+        let r = aio_handle.submit_request(self, RawCommand::Fsync).await?;
+        if r != 0 {
+            return Err(AioCommandError::NonZeroCode);
+        }
+        Ok(())
     }
 
     /// Sync only data through AIO
-    pub async fn sync_data(
-        &self,
-        aio_handle: &AioContextHandle,
-    ) -> Result<AioResult, AioCommandError> {
-        aio_handle.submit_request(self, RawCommand::Fdsync).await
+    pub async fn sync_data(&self, aio_handle: &AioContextHandle) -> Result<(), AioCommandError> {
+        let r = aio_handle.submit_request(self, RawCommand::Fdsync).await?;
+        if r != 0 {
+            return Err(AioCommandError::NonZeroCode);
+        }
+        Ok(())
     }
 }
 
