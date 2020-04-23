@@ -8,10 +8,10 @@ use crate::fs::AioOpenOptionsExt;
 use crate::{GenericAioContextHandle, LockedBuf, RawCommand, ReadFlags, WriteFlags};
 use lock_api::RawMutex;
 
-/// AIO version of tokio [`File`], to work through [`AioContextHandle`]
+/// AIO version of tokio [`File`], to work through [`GenericAioContextHandle`]
 ///
 /// [`File`]: ../tokio/fs/struct.File.html
-/// [`AioContextHandle`]: struct.AioContextHandle.html
+/// [`GenericAioContextHandle`]: struct.GenericAioContextHandle.html
 pub struct File {
     pub(crate) inner: tokio::fs::File,
 }

@@ -95,7 +95,7 @@ impl<MutexType: RawMutex> Drop for GenericAioContextInner<MutexType> {
 /// but some running futures will continue running until they receive
 /// the data.
 ///
-/// [`close`]: struct.AioContext.html#method.close
+/// [`close`]: struct.GenericAioContext.html#method.close
 pub struct GenericAioContext<MutexType: RawMutex> {
     inner: Arc<GenericAioContextInner<MutexType>>,
 }

@@ -18,8 +18,6 @@ pub trait AioOpenOptionsExt {
     ///
     /// # Errors
     /// Error codes are the same as in the tokio version
-    ///
-    /// ```
     async fn aio_open(mut self, path: PathBuf, is_sync: bool) -> io::Result<crate::fs::File>;
 }
 
