@@ -7,16 +7,17 @@ use futures::{ready, Future};
 
 use crate::errors::AioCommandError;
 use crate::requests::Request;
-use crate::{AioContextInner, AioResult};
+use crate::{AioResult, GenericAioContextInner};
+use lock_api::RawMutex;
 use std::mem;
 
-pub(crate) struct AioWaitFuture {
+pub(crate) struct AioWaitFuture<MutexType: RawMutex> {
     rx: oneshot::Receiver<AioResult>,
-    inner_context: Arc<AioContextInner>,
-    request: Option<Box<Request>>,
+    inner_context: Arc<GenericAioContextInner<MutexType>>,
+    request: Option<Box<Request<MutexType>>>,
 }
 
-impl AioWaitFuture {
+impl<MutexType: RawMutex> AioWaitFuture<MutexType> {
     fn return_request_to_pool(&mut self) {
         let req = self.request.take().unwrap();
         mem::drop(req.inner.lock().take_buf_lifetime_extender());
@@ -28,9 +29,9 @@ impl AioWaitFuture {
     }
 
     pub fn new(
-        inner_context: &Arc<AioContextInner>,
+        inner_context: &Arc<GenericAioContextInner<MutexType>>,
         rx: oneshot::Receiver<AioResult>,
-        request: Box<Request>,
+        request: Box<Request<MutexType>>,
     ) -> Self {
         AioWaitFuture {
             rx,
@@ -40,7 +41,7 @@ impl AioWaitFuture {
     }
 }
 
-impl Future for AioWaitFuture {
+impl<MutexType: RawMutex> Future for AioWaitFuture<MutexType> {
     type Output = Result<AioResult, AioCommandError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -52,7 +53,7 @@ impl Future for AioWaitFuture {
     }
 }
 
-impl Drop for AioWaitFuture {
+impl<MutexType: RawMutex> Drop for AioWaitFuture<MutexType> {
     fn drop(&mut self) {
         self.rx.close();
 

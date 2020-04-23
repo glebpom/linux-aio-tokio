@@ -9,7 +9,7 @@ use intrusive_collections::{intrusive_adapter, LinkedList};
 use crate::locked_buf::LifetimeExtender;
 use crate::requests::atomic_link::AtomicLink;
 use crate::{aio, AioResult, RawCommand};
-use parking_lot::Mutex;
+use lock_api::{Mutex, RawMutex};
 
 mod atomic_link;
 
@@ -27,14 +27,14 @@ impl RequestInner {
 }
 
 #[derive(Debug)]
-pub struct Request {
+pub struct Request<MutexType: RawMutex> {
     link: AtomicLink,
-    pub(crate) inner: Mutex<RequestInner>,
+    pub(crate) inner: Mutex<MutexType, RequestInner>,
 }
 
-impl Request {
+impl<MutexType: RawMutex> Request<MutexType> {
     pub fn aio_addr(&self) -> u64 {
-        (unsafe { mem::transmute::<_, usize>(self as *const Request) }) as u64
+        (unsafe { mem::transmute::<_, usize>(self as *const Request<MutexType>) }) as u64
     }
 
     pub fn send_to_waiter(&self, data: AioResult) -> bool {
@@ -79,15 +79,15 @@ impl Request {
     }
 }
 
-intrusive_adapter!(RequestAdapter = Box<Request>: Request { link: AtomicLink });
+intrusive_adapter!(RequestAdapter<MutexType> = Box<Request<MutexType>>: Request<MutexType> { link: AtomicLink } where MutexType: RawMutex);
 
-pub struct Requests {
-    ready_pool: LinkedList<RequestAdapter>,
-    outstanding: LinkedList<RequestAdapter>,
+pub struct Requests<MutexType: RawMutex> {
+    ready_pool: LinkedList<RequestAdapter<MutexType>>,
+    outstanding: LinkedList<RequestAdapter<MutexType>>,
 }
 
-impl Requests {
-    pub fn new(nr: usize) -> Result<Requests, io::Error> {
+impl<MutexType: RawMutex> Requests<MutexType> {
+    pub fn new(nr: usize) -> Result<Requests<MutexType>, io::Error> {
         let outstanding = LinkedList::new(RequestAdapter::new());
         let mut ready_pool = LinkedList::new(RequestAdapter::new());
 
@@ -108,11 +108,11 @@ impl Requests {
         })
     }
 
-    pub fn move_to_outstanding(&mut self, ptr: Box<Request>) {
+    pub fn move_to_outstanding(&mut self, ptr: Box<Request<MutexType>>) {
         self.outstanding.push_back(ptr);
     }
 
-    pub fn return_outstanding_to_ready(&mut self, request: *const Request) {
+    pub fn return_outstanding_to_ready(&mut self, request: *const Request<MutexType>) {
         let mut cursor = unsafe { self.outstanding.cursor_mut_from_ptr(request) };
 
         self.ready_pool.push_back(
@@ -122,11 +122,11 @@ impl Requests {
         );
     }
 
-    pub fn return_in_flight_to_ready(&mut self, req: Box<Request>) {
+    pub fn return_in_flight_to_ready(&mut self, req: Box<Request<MutexType>>) {
         self.ready_pool.push_back(req);
     }
 
-    pub fn take(&mut self) -> Box<Request> {
+    pub fn take(&mut self) -> Box<Request<MutexType>> {
         self.ready_pool.pop_front().expect(
             "could not retrieve request from ready_pool after successful acquire from semaphore",
         )

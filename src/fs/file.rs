@@ -5,7 +5,8 @@ use std::{fmt, io};
 
 use crate::errors::AioCommandError;
 use crate::fs::AioOpenOptionsExt;
-use crate::{AioContextHandle, LockedBuf, RawCommand, ReadFlags, WriteFlags};
+use crate::{GenericAioContextHandle, LockedBuf, RawCommand, ReadFlags, WriteFlags};
+use lock_api::RawMutex;
 
 /// AIO version of tokio [`File`], to work through [`AioContextHandle`]
 ///
@@ -73,9 +74,9 @@ impl File {
     ///
     /// [`buffer`]: struct.LockedBuf.html
     /// [`flags`]: struct.ReadFlags.html
-    pub async fn read_at(
+    pub async fn read_at<MutexType: RawMutex>(
         &self,
-        aio_handle: &AioContextHandle,
+        aio_handle: &GenericAioContextHandle<MutexType>,
         offset: u64,
         buffer: &mut LockedBuf,
         len: u64,
@@ -99,9 +100,9 @@ impl File {
     ///
     /// [`buffer`]: struct.LockedBuf.html
     /// [`flags`]: struct.ReadFlags.html
-    pub async fn write_at(
+    pub async fn write_at<MutexType: RawMutex>(
         &self,
-        aio_handle: &AioContextHandle,
+        aio_handle: &GenericAioContextHandle<MutexType>,
         offset: u64,
         buffer: &LockedBuf,
         len: u64,
@@ -122,7 +123,10 @@ impl File {
     }
 
     /// Sync data and metadata through AIO
-    pub async fn sync_all(&self, aio_handle: &AioContextHandle) -> Result<(), AioCommandError> {
+    pub async fn sync_all<MutexType: RawMutex>(
+        &self,
+        aio_handle: &GenericAioContextHandle<MutexType>,
+    ) -> Result<(), AioCommandError> {
         let r = aio_handle.submit_request(self, RawCommand::Fsync).await?;
         if r != 0 {
             return Err(AioCommandError::NonZeroCode);
@@ -131,7 +135,10 @@ impl File {
     }
 
     /// Sync only data through AIO
-    pub async fn sync_data(&self, aio_handle: &AioContextHandle) -> Result<(), AioCommandError> {
+    pub async fn sync_data<MutexType: RawMutex>(
+        &self,
+        aio_handle: &GenericAioContextHandle<MutexType>,
+    ) -> Result<(), AioCommandError> {
         let r = aio_handle.submit_request(self, RawCommand::Fdsync).await?;
         if r != 0 {
             return Err(AioCommandError::NonZeroCode);
