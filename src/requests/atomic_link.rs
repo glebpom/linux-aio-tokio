@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use intrusive_collections::linked_list::LinkedListOps;
 use intrusive_collections::{DefaultLinkOps, LinkOps};
 
+/// Link for intrusive collection, suitable for multi-threaded environments
 pub struct AtomicLink {
     locked: AtomicBool,
     next: Cell<Option<NonNull<AtomicLink>>>,
@@ -70,7 +71,8 @@ impl fmt::Debug for AtomicLink {
     }
 }
 
-#[derive(Clone, Copy, Default)]
+/// LinkOps for intrusive collection, suitable for multi-threaded environments
+#[derive(Clone, Copy, Default, Debug)]
 pub struct AtomicLinkOps;
 
 // https://github.com/Amanieu/intrusive-rs/issues/47

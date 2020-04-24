@@ -1,17 +1,22 @@
 #![allow(clippy::unneeded_field_pattern)]
 
+use std::marker::PhantomData;
 use std::os::unix::prelude::*;
 use std::{io, mem};
 
 use futures::channel::oneshot;
-use intrusive_collections::{intrusive_adapter, LinkedList};
+use intrusive_collections::linked_list::LinkedListOps;
+use intrusive_collections::{DefaultLinkOps, LinkedList};
+use lock_api::{Mutex, RawMutex};
 
 use crate::locked_buf::LifetimeExtender;
-use crate::requests::atomic_link::AtomicLink;
+pub use crate::requests::atomic_link::AtomicLink;
 use crate::{aio, AioResult, RawCommand};
-use parking_lot::Mutex;
+
+pub use self::intrusive_adapter::{IntrusiveAdapter, LocalRequestAdapter, SyncRequestAdapter};
 
 mod atomic_link;
+mod intrusive_adapter;
 
 #[derive(Debug)]
 pub(crate) struct RequestInner {
@@ -27,14 +32,14 @@ impl RequestInner {
 }
 
 #[derive(Debug)]
-pub struct Request {
-    link: AtomicLink,
-    pub(crate) inner: Mutex<RequestInner>,
+pub struct Request<M: RawMutex, L: DefaultLinkOps> {
+    link: L,
+    pub(crate) inner: Mutex<M, RequestInner>,
 }
 
-impl Request {
+impl<M: RawMutex, L: DefaultLinkOps> Request<M, L> {
     pub fn aio_addr(&self) -> u64 {
-        (unsafe { mem::transmute::<_, usize>(self as *const Request) }) as u64
+        (unsafe { mem::transmute::<_, usize>(self as *const Self) }) as u64
     }
 
     pub fn send_to_waiter(&self, data: AioResult) -> bool {
@@ -79,17 +84,29 @@ impl Request {
     }
 }
 
-intrusive_adapter!(RequestAdapter = Box<Request>: Request { link: AtomicLink });
-
-pub struct Requests {
-    ready_pool: LinkedList<RequestAdapter>,
-    outstanding: LinkedList<RequestAdapter>,
+pub struct Requests<
+    M: RawMutex,
+    A: crate::IntrusiveAdapter<M, L>,
+    L: DefaultLinkOps<Ops = A::LinkOps> + Default,
+> where
+    A::LinkOps: LinkedListOps + Default,
+{
+    ready_pool: LinkedList<A>,
+    outstanding: LinkedList<A>,
+    _request_mutex: PhantomData<M>,
+    _link_ops: PhantomData<L>,
 }
 
-impl Requests {
-    pub fn new(nr: usize) -> Result<Requests, io::Error> {
-        let outstanding = LinkedList::new(RequestAdapter::new());
-        let mut ready_pool = LinkedList::new(RequestAdapter::new());
+impl<M, A, L> Requests<M, A, L>
+where
+    M: RawMutex,
+    A: crate::IntrusiveAdapter<M, L>,
+    A::LinkOps: LinkedListOps + Default,
+    L: DefaultLinkOps<Ops = A::LinkOps> + Default,
+{
+    pub fn new(nr: usize) -> Result<Self, io::Error> {
+        let outstanding = LinkedList::new(A::new());
+        let mut ready_pool = LinkedList::new(A::new());
 
         for _ in 0..nr {
             ready_pool.push_back(Box::new(Request {
@@ -105,14 +122,16 @@ impl Requests {
         Ok(Requests {
             ready_pool,
             outstanding,
+            _request_mutex: Default::default(),
+            _link_ops: Default::default(),
         })
     }
 
-    pub fn move_to_outstanding(&mut self, ptr: Box<Request>) {
+    pub fn move_to_outstanding(&mut self, ptr: Box<Request<M, L>>) {
         self.outstanding.push_back(ptr);
     }
 
-    pub fn return_outstanding_to_ready(&mut self, request: *const Request) {
+    pub fn return_outstanding_to_ready(&mut self, request: *const Request<M, L>) {
         let mut cursor = unsafe { self.outstanding.cursor_mut_from_ptr(request) };
 
         self.ready_pool.push_back(
@@ -122,11 +141,11 @@ impl Requests {
         );
     }
 
-    pub fn return_in_flight_to_ready(&mut self, req: Box<Request>) {
+    pub fn return_in_flight_to_ready(&mut self, req: Box<Request<M, L>>) {
         self.ready_pool.push_back(req);
     }
 
-    pub fn take(&mut self) -> Box<Request> {
+    pub fn take(&mut self) -> Box<Request<M, L>> {
         self.ready_pool.pop_front().expect(
             "could not retrieve request from ready_pool after successful acquire from semaphore",
         )

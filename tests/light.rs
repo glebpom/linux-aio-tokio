@@ -8,17 +8,57 @@ use std::time::Duration;
 use futures::channel::oneshot;
 use futures::future::join_all;
 use futures::{select_biased, FutureExt};
+use tokio::task::{self, LocalSet};
 use tokio::time::delay_for;
 
 use assert_matches::assert_matches;
 use helpers::*;
-use linux_aio_tokio::{aio_context, AioCommandError, LockedBuf, ReadFlags, WriteFlags};
+use linux_aio_tokio::{
+    aio_context, local_aio_context, AioCommandError, LockedBuf, ReadFlags, WriteFlags,
+};
 use linux_aio_tokio::{AioOpenOptionsExt, File};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 pub mod helpers;
 
 const FILE_SIZE: usize = 1024 * 512;
 const BUF_CAPACITY: usize = 8192;
+
+#[tokio::test]
+async fn local_context() {
+    let (dir, path) = create_filled_tempfile(FILE_SIZE);
+
+    let (_aio, aio_handle, aio_background) = local_aio_context(10).unwrap();
+
+    let buffer = Rc::new(RefCell::new(LockedBuf::with_size(BUF_CAPACITY).unwrap()));
+
+    LocalSet::new()
+        .run_until({
+            let buffer = buffer.clone();
+
+            async move {
+                task::spawn_local(aio_background);
+
+                let file = File::open(&path, false).await.unwrap();
+
+                file.read_at(
+                    &aio_handle,
+                    0,
+                    &mut *buffer.borrow_mut(),
+                    BUF_CAPACITY as _,
+                    ReadFlags::empty(),
+                )
+                .await
+                .unwrap();
+            }
+        })
+        .await;
+
+    assert!(validate_block((&*buffer.borrow()).as_ref()));
+
+    dir.close().unwrap();
+}
 
 #[tokio::test]
 async fn aio_close() {

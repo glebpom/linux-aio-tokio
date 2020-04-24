@@ -1,22 +1,38 @@
+use std::mem;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use futures::channel::oneshot;
 use futures::{ready, Future};
+use intrusive_collections::DefaultLinkOps;
+use lock_api::RawMutex;
 
 use crate::errors::AioCommandError;
 use crate::requests::Request;
-use crate::{AioContextInner, AioResult};
-use std::mem;
+use crate::{AioResult, GenericAioContextInner};
+use intrusive_collections::linked_list::LinkedListOps;
 
-pub(crate) struct AioWaitFuture {
+pub(crate) struct AioWaitFuture<
+    M: RawMutex,
+    A: crate::IntrusiveAdapter<M, L>,
+    L: DefaultLinkOps<Ops = A::LinkOps> + Default,
+> where
+    A::LinkOps: LinkedListOps + Default,
+{
     rx: oneshot::Receiver<AioResult>,
-    inner_context: Arc<AioContextInner>,
-    request: Option<Box<Request>>,
+    inner_context: Arc<GenericAioContextInner<M, A, L>>,
+    request: Option<Box<Request<M, L>>>,
 }
 
-impl AioWaitFuture {
+impl<
+        M: RawMutex,
+        A: crate::IntrusiveAdapter<M, L>,
+        L: DefaultLinkOps<Ops = A::LinkOps> + Default,
+    > AioWaitFuture<M, A, L>
+where
+    A::LinkOps: LinkedListOps + Default,
+{
     fn return_request_to_pool(&mut self) {
         let req = self.request.take().unwrap();
         mem::drop(req.inner.lock().take_buf_lifetime_extender());
@@ -28,9 +44,9 @@ impl AioWaitFuture {
     }
 
     pub fn new(
-        inner_context: &Arc<AioContextInner>,
+        inner_context: &Arc<GenericAioContextInner<M, A, L>>,
         rx: oneshot::Receiver<AioResult>,
-        request: Box<Request>,
+        request: Box<Request<M, L>>,
     ) -> Self {
         AioWaitFuture {
             rx,
@@ -40,7 +56,14 @@ impl AioWaitFuture {
     }
 }
 
-impl Future for AioWaitFuture {
+impl<
+        M: RawMutex,
+        A: crate::IntrusiveAdapter<M, L>,
+        L: DefaultLinkOps<Ops = A::LinkOps> + Default,
+    > Future for AioWaitFuture<M, A, L>
+where
+    A::LinkOps: LinkedListOps + Default,
+{
     type Output = Result<AioResult, AioCommandError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -52,7 +75,14 @@ impl Future for AioWaitFuture {
     }
 }
 
-impl Drop for AioWaitFuture {
+impl<
+        M: RawMutex,
+        A: crate::IntrusiveAdapter<M, L>,
+        L: DefaultLinkOps<Ops = A::LinkOps> + Default,
+    > Drop for AioWaitFuture<M, A, L>
+where
+    A::LinkOps: LinkedListOps + Default,
+{
     fn drop(&mut self) {
         self.rx.close();
 

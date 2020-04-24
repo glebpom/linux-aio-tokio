@@ -3,14 +3,18 @@ use std::os::unix::prelude::*;
 use std::path::{Path, PathBuf};
 use std::{fmt, io};
 
+use intrusive_collections::linked_list::LinkedListOps;
+use intrusive_collections::DefaultLinkOps;
+use lock_api::RawMutex;
+
 use crate::errors::AioCommandError;
 use crate::fs::AioOpenOptionsExt;
-use crate::{AioContextHandle, LockedBuf, RawCommand, ReadFlags, WriteFlags};
+use crate::{GenericAioContextHandle, LockedBuf, RawCommand, ReadFlags, WriteFlags};
 
-/// AIO version of tokio [`File`], to work through [`AioContextHandle`]
+/// AIO version of tokio [`File`], to work through [`GenericAioContextHandle`]
 ///
 /// [`File`]: ../tokio/fs/struct.File.html
-/// [`AioContextHandle`]: struct.AioContextHandle.html
+/// [`GenericAioContextHandle`]: struct.GenericAioContextHandle.html
 pub struct File {
     pub(crate) inner: tokio::fs::File,
 }
@@ -73,14 +77,21 @@ impl File {
     ///
     /// [`buffer`]: struct.LockedBuf.html
     /// [`flags`]: struct.ReadFlags.html
-    pub async fn read_at(
+    pub async fn read_at<
+        M: RawMutex,
+        A: crate::IntrusiveAdapter<M, L>,
+        L: DefaultLinkOps<Ops = A::LinkOps> + Default,
+    >(
         &self,
-        aio_handle: &AioContextHandle,
+        aio_handle: &GenericAioContextHandle<M, A, L>,
         offset: u64,
         buffer: &mut LockedBuf,
         len: u64,
         flags: ReadFlags,
-    ) -> Result<u64, AioCommandError> {
+    ) -> Result<u64, AioCommandError>
+    where
+        A::LinkOps: LinkedListOps + Default,
+    {
         assert!(len <= buffer.size() as u64);
         aio_handle
             .submit_request(
@@ -99,14 +110,21 @@ impl File {
     ///
     /// [`buffer`]: struct.LockedBuf.html
     /// [`flags`]: struct.ReadFlags.html
-    pub async fn write_at(
+    pub async fn write_at<
+        M: RawMutex,
+        A: crate::IntrusiveAdapter<M, L>,
+        L: DefaultLinkOps<Ops = A::LinkOps> + Default,
+    >(
         &self,
-        aio_handle: &AioContextHandle,
+        aio_handle: &GenericAioContextHandle<M, A, L>,
         offset: u64,
         buffer: &LockedBuf,
         len: u64,
         flags: WriteFlags,
-    ) -> Result<u64, AioCommandError> {
+    ) -> Result<u64, AioCommandError>
+    where
+        A::LinkOps: LinkedListOps + Default,
+    {
         assert!(len <= buffer.size() as u64);
         aio_handle
             .submit_request(
@@ -122,7 +140,17 @@ impl File {
     }
 
     /// Sync data and metadata through AIO
-    pub async fn sync_all(&self, aio_handle: &AioContextHandle) -> Result<(), AioCommandError> {
+    pub async fn sync_all<
+        M: RawMutex,
+        A: crate::IntrusiveAdapter<M, L>,
+        L: DefaultLinkOps<Ops = A::LinkOps> + Default,
+    >(
+        &self,
+        aio_handle: &GenericAioContextHandle<M, A, L>,
+    ) -> Result<(), AioCommandError>
+    where
+        A::LinkOps: LinkedListOps + Default,
+    {
         let r = aio_handle.submit_request(self, RawCommand::Fsync).await?;
         if r != 0 {
             return Err(AioCommandError::NonZeroCode);
@@ -131,7 +159,17 @@ impl File {
     }
 
     /// Sync only data through AIO
-    pub async fn sync_data(&self, aio_handle: &AioContextHandle) -> Result<(), AioCommandError> {
+    pub async fn sync_data<
+        M: RawMutex,
+        A: crate::IntrusiveAdapter<M, L>,
+        L: DefaultLinkOps<Ops = A::LinkOps> + Default,
+    >(
+        &self,
+        aio_handle: &GenericAioContextHandle<M, A, L>,
+    ) -> Result<(), AioCommandError>
+    where
+        A::LinkOps: LinkedListOps + Default,
+    {
         let r = aio_handle.submit_request(self, RawCommand::Fdsync).await?;
         if r != 0 {
             return Err(AioCommandError::NonZeroCode);

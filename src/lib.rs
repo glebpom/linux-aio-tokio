@@ -12,6 +12,7 @@
 //! other hand, provides kernel-level asynchronous scheduling of I/O operations to the underlying block device.
 
 use std::convert::TryInto;
+use std::future::Future;
 use std::os::unix::prelude::*;
 use std::ptr;
 use std::sync::{Arc, Weak};
@@ -19,8 +20,10 @@ use std::{fmt, io, mem};
 
 use futures::channel::oneshot;
 use futures::{pin_mut, select, FutureExt, StreamExt};
-use futures_intrusive::sync::Semaphore;
-use parking_lot::Mutex;
+use futures_intrusive::sync::GenericSemaphore;
+use intrusive_collections::linked_list::LinkedListOps;
+use intrusive_collections::{linked_list, DefaultLinkOps};
+use lock_api::{Mutex, RawMutex};
 use tokio::task;
 
 pub use commands::*;
@@ -29,8 +32,13 @@ pub use eventfd::EventFd;
 pub use flags::*;
 pub use fs::{AioOpenOptionsExt, File};
 pub use locked_buf::{LockedBuf, LockedBufError};
+pub use noop_lock::NoopLock;
 use requests::{Request, Requests};
 use wait_future::AioWaitFuture;
+
+pub use crate::requests::AtomicLink;
+pub use crate::requests::IntrusiveAdapter;
+pub use crate::requests::{LocalRequestAdapter, SyncRequestAdapter};
 
 mod aio;
 mod commands;
@@ -39,26 +47,40 @@ mod eventfd;
 mod flags;
 mod fs;
 mod locked_buf;
+mod noop_lock;
 mod requests;
 mod wait_future;
 
 type AioResult = aio::__s64;
 
-pub(crate) struct AioContextInner {
+pub(crate) struct GenericAioContextInner<
+    M: RawMutex,
+    A: crate::IntrusiveAdapter<M, L>,
+    L: DefaultLinkOps<Ops = A::LinkOps> + Default,
+> where
+    A::LinkOps: LinkedListOps + Default,
+{
     context: aio::aio_context_t,
     eventfd: RawFd,
     num_slots: usize,
-    capacity: Semaphore,
-    requests: parking_lot::Mutex<Requests>,
-    stop_tx: Mutex<Option<oneshot::Sender<()>>>,
+    capacity: GenericSemaphore<M>,
+    requests: Mutex<M, Requests<M, A, L>>,
+    stop_tx: Mutex<M, Option<oneshot::Sender<()>>>,
 }
 
-impl AioContextInner {
+impl<
+        M: RawMutex,
+        A: crate::IntrusiveAdapter<M, L>,
+        L: DefaultLinkOps<Ops = A::LinkOps> + Default,
+    > GenericAioContextInner<M, A, L>
+where
+    A::LinkOps: LinkedListOps + Default,
+{
     fn new(
         eventfd: RawFd,
         nr: usize,
         stop_tx: oneshot::Sender<()>,
-    ) -> Result<AioContextInner, AioContextError> {
+    ) -> Result<GenericAioContextInner<M, A, L>, AioContextError> {
         let mut context: aio::aio_context_t = 0;
 
         unsafe {
@@ -67,10 +89,10 @@ impl AioContextInner {
             }
         };
 
-        Ok(AioContextInner {
+        Ok(GenericAioContextInner {
             context,
             requests: Mutex::new(Requests::new(nr)?),
-            capacity: Semaphore::new(true, nr),
+            capacity: GenericSemaphore::new(true, nr),
             eventfd,
             stop_tx: Mutex::new(Some(stop_tx)),
             num_slots: nr,
@@ -78,7 +100,14 @@ impl AioContextInner {
     }
 }
 
-impl Drop for AioContextInner {
+impl<
+        M: RawMutex,
+        A: crate::IntrusiveAdapter<M, L>,
+        L: DefaultLinkOps<Ops = A::LinkOps> + Default,
+    > Drop for GenericAioContextInner<M, A, L>
+where
+    A::LinkOps: LinkedListOps + Default,
+{
     fn drop(&mut self) {
         let result = unsafe { aio::io_destroy(self.context) };
         assert_eq!(0, result, "io_destroy returned bad code");
@@ -92,12 +121,25 @@ impl Drop for AioContextInner {
 /// but some running futures will continue running until they receive
 /// the data.
 ///
-/// [`close`]: struct.AioContext.html#method.close
-pub struct AioContext {
-    inner: Arc<AioContextInner>,
+/// [`close`]: struct.GenericAioContext.html#method.close
+pub struct GenericAioContext<
+    M: RawMutex,
+    A: crate::IntrusiveAdapter<M, L>,
+    L: DefaultLinkOps<Ops = A::LinkOps> + Default,
+> where
+    A::LinkOps: LinkedListOps + Default,
+{
+    inner: Arc<GenericAioContextInner<M, A, L>>,
 }
 
-impl fmt::Debug for AioContext {
+impl<
+        M: RawMutex,
+        A: crate::IntrusiveAdapter<M, L>,
+        L: DefaultLinkOps<Ops = A::LinkOps> + Default,
+    > fmt::Debug for GenericAioContext<M, A, L>
+where
+    A::LinkOps: LinkedListOps + Default,
+{
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("AioContext")
             .field("num_slots", &self.inner.num_slots)
@@ -106,12 +148,39 @@ impl fmt::Debug for AioContext {
 }
 
 /// Cloneable handle to AIO context. Required for any AIO operations
-#[derive(Clone)]
-pub struct AioContextHandle {
-    inner: Weak<AioContextInner>,
+pub struct GenericAioContextHandle<
+    M: RawMutex,
+    A: crate::IntrusiveAdapter<M, L>,
+    L: DefaultLinkOps<Ops = A::LinkOps> + Default,
+> where
+    A::LinkOps: LinkedListOps + Default,
+{
+    inner: Weak<GenericAioContextInner<M, A, L>>,
 }
 
-impl AioContextHandle {
+impl<
+        M: RawMutex,
+        A: crate::IntrusiveAdapter<M, L>,
+        L: DefaultLinkOps<Ops = A::LinkOps> + Default,
+    > Clone for GenericAioContextHandle<M, A, L>
+where
+    A::LinkOps: LinkedListOps + Default,
+{
+    fn clone(&self) -> Self {
+        GenericAioContextHandle {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
+impl<
+        M: RawMutex,
+        A: crate::IntrusiveAdapter<M, L>,
+        L: DefaultLinkOps<Ops = A::LinkOps> + Default,
+    > GenericAioContextHandle<M, A, L>
+where
+    A::LinkOps: LinkedListOps + Default,
+{
     /// Number of available AIO slots left in the context
     pub fn available_slots(&self) -> Option<usize> {
         self.inner.upgrade().map(|i| i.capacity.permits())
@@ -183,18 +252,45 @@ impl AioContextHandle {
     }
 }
 
-impl fmt::Debug for AioContextHandle {
+impl<
+        M: RawMutex,
+        A: crate::IntrusiveAdapter<M, L>,
+        L: DefaultLinkOps<Ops = A::LinkOps> + Default,
+    > fmt::Debug for GenericAioContextHandle<M, A, L>
+where
+    A::LinkOps: LinkedListOps + Default,
+{
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("AioContextHandle").finish()
     }
 }
 
 /// Create new AIO context
-pub fn aio_context(nr: usize) -> Result<(AioContext, AioContextHandle), AioContextError> {
+#[allow(clippy::type_complexity)]
+pub fn generic_aio_context<M, A, L>(
+    nr: usize,
+) -> Result<
+    (
+        GenericAioContext<M, A, L>,
+        GenericAioContextHandle<M, A, L>,
+        impl Future<Output = Result<(), io::Error>>,
+    ),
+    AioContextError,
+>
+where
+    A: crate::IntrusiveAdapter<M, L>,
+    A::LinkOps: LinkedListOps + Default,
+    L: DefaultLinkOps<Ops = A::LinkOps> + Default,
+    M: RawMutex,
+{
     let mut eventfd = EventFd::new(0, false)?;
     let (stop_tx, stop_rx) = oneshot::channel();
 
-    let inner = Arc::new(AioContextInner::new(eventfd.as_raw_fd(), nr, stop_tx)?);
+    let inner = Arc::new(GenericAioContextInner::new(
+        eventfd.as_raw_fd(),
+        nr,
+        stop_tx,
+    )?);
 
     let context = inner.context;
 
@@ -232,7 +328,7 @@ pub fn aio_context(nr: usize) -> Result<(AioContext, AioContextHandle), AioConte
                 };
 
                 for event in &events {
-                    let request_ptr = event.data as usize as *mut Request;
+                    let request_ptr = event.data as usize as *mut Request<M, L>;
 
                     let sent_succeeded = unsafe { &*request_ptr }.send_to_waiter(event.res);
 
@@ -257,23 +353,30 @@ pub fn aio_context(nr: usize) -> Result<(AioContext, AioContextHandle), AioConte
     }
     .fuse();
 
-    tokio::spawn(async move {
+    let background = async move {
         pin_mut!(poll_future);
 
         select! {
-            _ = poll_future => {},
-            _ = stop_rx.fuse() => {},
+            res = poll_future => res,
+            _ = stop_rx.fuse() => Ok(()),
         }
-    });
+    };
 
-    let handle = AioContextHandle {
+    let handle = GenericAioContextHandle {
         inner: Arc::downgrade(&inner),
     };
 
-    Ok((AioContext { inner }, handle))
+    Ok((GenericAioContext { inner }, handle, background))
 }
 
-impl AioContext {
+impl<
+        M: RawMutex,
+        A: crate::IntrusiveAdapter<M, L>,
+        L: DefaultLinkOps<Ops = A::LinkOps> + Default,
+    > GenericAioContext<M, A, L>
+where
+    A::LinkOps: LinkedListOps + Default,
+{
     /// Number of available AIO slots left in the context
     pub fn available_slots(&self) -> usize {
         self.inner.capacity.permits()
@@ -287,3 +390,45 @@ impl AioContext {
         }
     }
 }
+
+/// Create new AIO context suitable for cross-threaded environment (tokio rt-threaded),
+/// backed by parking_lot Mutex. Automatically spawn background task, which polls
+/// eventfd with `tokio::spawn`.
+#[inline]
+pub fn aio_context(nr: usize) -> Result<(AioContext, AioContextHandle), AioContextError> {
+    let (aio_context, aio_handle, background) = generic_aio_context(nr)?;
+    tokio::spawn(background);
+
+    Ok((aio_context, aio_handle))
+}
+
+/// AIO context suitable for cross-threaded environment (tokio rt-threaded),
+/// backed by parking_lot Mutex
+pub type AioContext = GenericAioContext<parking_lot::RawMutex, SyncRequestAdapter, AtomicLink>;
+
+/// AIO context handle suitable for cross-threaded environment (tokio rt-threaded),
+/// backed by parking_lot Mutex
+pub type AioContextHandle =
+    GenericAioContextHandle<parking_lot::RawMutex, SyncRequestAdapter, AtomicLink>;
+
+/// Create new AIO context suitable for single-threaded environment (tokio rt-core)
+#[inline]
+pub fn local_aio_context(
+    nr: usize,
+) -> Result<
+    (
+        LocalAioContext,
+        LocalAioContextHandle,
+        impl Future<Output = Result<(), io::Error>>,
+    ),
+    AioContextError,
+> {
+    generic_aio_context(nr)
+}
+
+/// AIO context suitable for cross-threaded environment (tokio rt-core)
+pub type LocalAioContext = GenericAioContext<NoopLock, LocalRequestAdapter, linked_list::Link>;
+
+/// AIO context handle suitable for single-threaded environment (tokio rt-core)
+pub type LocalAioContextHandle =
+    GenericAioContextHandle<NoopLock, LocalRequestAdapter, linked_list::Link>;
