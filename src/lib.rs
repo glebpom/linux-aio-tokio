@@ -21,6 +21,8 @@ use std::{fmt, io, mem};
 use futures::channel::oneshot;
 use futures::{pin_mut, select, FutureExt, StreamExt};
 use futures_intrusive::sync::GenericSemaphore;
+use intrusive_collections::linked_list::LinkedListOps;
+use intrusive_collections::{linked_list, DefaultLinkOps};
 use lock_api::{Mutex, RawMutex};
 use tokio::task;
 
@@ -33,6 +35,10 @@ pub use locked_buf::{LockedBuf, LockedBufError};
 pub use noop_lock::NoopLock;
 use requests::{Request, Requests};
 use wait_future::AioWaitFuture;
+
+pub use crate::requests::AtomicLink;
+pub use crate::requests::IntrusiveAdapter;
+pub use crate::requests::{LocalRequestAdapter, SyncRequestAdapter};
 
 mod aio;
 mod commands;
@@ -47,21 +53,34 @@ mod wait_future;
 
 type AioResult = aio::__s64;
 
-pub(crate) struct GenericAioContextInner<MutexType: RawMutex> {
+pub(crate) struct GenericAioContextInner<
+    M: RawMutex,
+    A: crate::IntrusiveAdapter<M, L>,
+    L: DefaultLinkOps<Ops = A::LinkOps> + Default,
+> where
+    A::LinkOps: LinkedListOps + Default,
+{
     context: aio::aio_context_t,
     eventfd: RawFd,
     num_slots: usize,
-    capacity: GenericSemaphore<MutexType>,
-    requests: Mutex<MutexType, Requests<MutexType>>,
-    stop_tx: Mutex<MutexType, Option<oneshot::Sender<()>>>,
+    capacity: GenericSemaphore<M>,
+    requests: Mutex<M, Requests<M, A, L>>,
+    stop_tx: Mutex<M, Option<oneshot::Sender<()>>>,
 }
 
-impl<MutexType: RawMutex> GenericAioContextInner<MutexType> {
+impl<
+        M: RawMutex,
+        A: crate::IntrusiveAdapter<M, L>,
+        L: DefaultLinkOps<Ops = A::LinkOps> + Default,
+    > GenericAioContextInner<M, A, L>
+where
+    A::LinkOps: LinkedListOps + Default,
+{
     fn new(
         eventfd: RawFd,
         nr: usize,
         stop_tx: oneshot::Sender<()>,
-    ) -> Result<GenericAioContextInner<MutexType>, AioContextError> {
+    ) -> Result<GenericAioContextInner<M, A, L>, AioContextError> {
         let mut context: aio::aio_context_t = 0;
 
         unsafe {
@@ -81,7 +100,14 @@ impl<MutexType: RawMutex> GenericAioContextInner<MutexType> {
     }
 }
 
-impl<MutexType: RawMutex> Drop for GenericAioContextInner<MutexType> {
+impl<
+        M: RawMutex,
+        A: crate::IntrusiveAdapter<M, L>,
+        L: DefaultLinkOps<Ops = A::LinkOps> + Default,
+    > Drop for GenericAioContextInner<M, A, L>
+where
+    A::LinkOps: LinkedListOps + Default,
+{
     fn drop(&mut self) {
         let result = unsafe { aio::io_destroy(self.context) };
         assert_eq!(0, result, "io_destroy returned bad code");
@@ -96,11 +122,24 @@ impl<MutexType: RawMutex> Drop for GenericAioContextInner<MutexType> {
 /// the data.
 ///
 /// [`close`]: struct.GenericAioContext.html#method.close
-pub struct GenericAioContext<MutexType: RawMutex> {
-    inner: Arc<GenericAioContextInner<MutexType>>,
+pub struct GenericAioContext<
+    M: RawMutex,
+    A: crate::IntrusiveAdapter<M, L>,
+    L: DefaultLinkOps<Ops = A::LinkOps> + Default,
+> where
+    A::LinkOps: LinkedListOps + Default,
+{
+    inner: Arc<GenericAioContextInner<M, A, L>>,
 }
 
-impl<MutexType: RawMutex> fmt::Debug for GenericAioContext<MutexType> {
+impl<
+        M: RawMutex,
+        A: crate::IntrusiveAdapter<M, L>,
+        L: DefaultLinkOps<Ops = A::LinkOps> + Default,
+    > fmt::Debug for GenericAioContext<M, A, L>
+where
+    A::LinkOps: LinkedListOps + Default,
+{
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("AioContext")
             .field("num_slots", &self.inner.num_slots)
@@ -109,11 +148,24 @@ impl<MutexType: RawMutex> fmt::Debug for GenericAioContext<MutexType> {
 }
 
 /// Cloneable handle to AIO context. Required for any AIO operations
-pub struct GenericAioContextHandle<MutexType: RawMutex> {
-    inner: Weak<GenericAioContextInner<MutexType>>,
+pub struct GenericAioContextHandle<
+    M: RawMutex,
+    A: crate::IntrusiveAdapter<M, L>,
+    L: DefaultLinkOps<Ops = A::LinkOps> + Default,
+> where
+    A::LinkOps: LinkedListOps + Default,
+{
+    inner: Weak<GenericAioContextInner<M, A, L>>,
 }
 
-impl<MutexType: RawMutex> Clone for GenericAioContextHandle<MutexType> {
+impl<
+        M: RawMutex,
+        A: crate::IntrusiveAdapter<M, L>,
+        L: DefaultLinkOps<Ops = A::LinkOps> + Default,
+    > Clone for GenericAioContextHandle<M, A, L>
+where
+    A::LinkOps: LinkedListOps + Default,
+{
     fn clone(&self) -> Self {
         GenericAioContextHandle {
             inner: self.inner.clone(),
@@ -121,7 +173,14 @@ impl<MutexType: RawMutex> Clone for GenericAioContextHandle<MutexType> {
     }
 }
 
-impl<MutexType: RawMutex> GenericAioContextHandle<MutexType> {
+impl<
+        M: RawMutex,
+        A: crate::IntrusiveAdapter<M, L>,
+        L: DefaultLinkOps<Ops = A::LinkOps> + Default,
+    > GenericAioContextHandle<M, A, L>
+where
+    A::LinkOps: LinkedListOps + Default,
+{
     /// Number of available AIO slots left in the context
     pub fn available_slots(&self) -> Option<usize> {
         self.inner.upgrade().map(|i| i.capacity.permits())
@@ -193,23 +252,37 @@ impl<MutexType: RawMutex> GenericAioContextHandle<MutexType> {
     }
 }
 
-impl<MutexType: RawMutex> fmt::Debug for GenericAioContextHandle<MutexType> {
+impl<
+        M: RawMutex,
+        A: crate::IntrusiveAdapter<M, L>,
+        L: DefaultLinkOps<Ops = A::LinkOps> + Default,
+    > fmt::Debug for GenericAioContextHandle<M, A, L>
+where
+    A::LinkOps: LinkedListOps + Default,
+{
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("AioContextHandle").finish()
     }
 }
 
 /// Create new AIO context
-pub fn generic_aio_context<MutexType: RawMutex>(
+#[allow(clippy::type_complexity)]
+pub fn generic_aio_context<M, A, L>(
     nr: usize,
 ) -> Result<
     (
-        GenericAioContext<MutexType>,
-        GenericAioContextHandle<MutexType>,
+        GenericAioContext<M, A, L>,
+        GenericAioContextHandle<M, A, L>,
         impl Future<Output = Result<(), io::Error>>,
     ),
     AioContextError,
-> {
+>
+where
+    A: crate::IntrusiveAdapter<M, L>,
+    A::LinkOps: LinkedListOps + Default,
+    L: DefaultLinkOps<Ops = A::LinkOps> + Default,
+    M: RawMutex,
+{
     let mut eventfd = EventFd::new(0, false)?;
     let (stop_tx, stop_rx) = oneshot::channel();
 
@@ -255,7 +328,7 @@ pub fn generic_aio_context<MutexType: RawMutex>(
                 };
 
                 for event in &events {
-                    let request_ptr = event.data as usize as *mut Request<MutexType>;
+                    let request_ptr = event.data as usize as *mut Request<M, L>;
 
                     let sent_succeeded = unsafe { &*request_ptr }.send_to_waiter(event.res);
 
@@ -296,7 +369,14 @@ pub fn generic_aio_context<MutexType: RawMutex>(
     Ok((GenericAioContext { inner }, handle, background))
 }
 
-impl<MutexType: RawMutex> GenericAioContext<MutexType> {
+impl<
+        M: RawMutex,
+        A: crate::IntrusiveAdapter<M, L>,
+        L: DefaultLinkOps<Ops = A::LinkOps> + Default,
+    > GenericAioContext<M, A, L>
+where
+    A::LinkOps: LinkedListOps + Default,
+{
     /// Number of available AIO slots left in the context
     pub fn available_slots(&self) -> usize {
         self.inner.capacity.permits()
@@ -324,11 +404,12 @@ pub fn aio_context(nr: usize) -> Result<(AioContext, AioContextHandle), AioConte
 
 /// AIO context suitable for cross-threaded environment (tokio rt-threaded),
 /// backed by parking_lot Mutex
-pub type AioContext = GenericAioContext<parking_lot::RawMutex>;
+pub type AioContext = GenericAioContext<parking_lot::RawMutex, SyncRequestAdapter, AtomicLink>;
 
 /// AIO context handle suitable for cross-threaded environment (tokio rt-threaded),
 /// backed by parking_lot Mutex
-pub type AioContextHandle = GenericAioContextHandle<parking_lot::RawMutex>;
+pub type AioContextHandle =
+    GenericAioContextHandle<parking_lot::RawMutex, SyncRequestAdapter, AtomicLink>;
 
 /// Create new AIO context suitable for single-threaded environment (tokio rt-core)
 #[inline]
@@ -346,7 +427,8 @@ pub fn local_aio_context(
 }
 
 /// AIO context suitable for cross-threaded environment (tokio rt-core)
-pub type LocalAioContext = GenericAioContext<NoopLock>;
+pub type LocalAioContext = GenericAioContext<NoopLock, LocalRequestAdapter, linked_list::Link>;
 
 /// AIO context handle suitable for single-threaded environment (tokio rt-core)
-pub type LocalAioContextHandle = GenericAioContextHandle<NoopLock>;
+pub type LocalAioContextHandle =
+    GenericAioContextHandle<NoopLock, LocalRequestAdapter, linked_list::Link>;
