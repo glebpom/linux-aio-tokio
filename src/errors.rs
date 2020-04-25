@@ -24,6 +24,11 @@ pub enum AioCommandError {
     /// Non-zero length returned
     #[error("non-zero code returned")]
     NonZeroCode,
+
+    /// The capacity of AIO context exceeded. Happens if `use_semaphore` set to `false`
+    /// and the code attempts to send more requests than kernel-threads.
+    #[error("capacity exceeded")]
+    CapacityExceeded,
 }
 
 /// AIO context creation error

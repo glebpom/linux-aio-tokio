@@ -40,7 +40,10 @@ where
             .requests
             .lock()
             .return_in_flight_to_ready(req);
-        self.inner_context.capacity.release(1);
+
+        if let Some(c) = &self.inner_context.capacity {
+            c.release(1)
+        }
     }
 
     pub fn new(

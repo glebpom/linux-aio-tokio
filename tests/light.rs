@@ -29,7 +29,7 @@ const BUF_CAPACITY: usize = 8192;
 async fn local_context() {
     let (dir, path) = create_filled_tempfile(FILE_SIZE);
 
-    let (_aio, aio_handle, aio_background) = local_aio_context(10).unwrap();
+    let (_aio, aio_handle, aio_background) = local_aio_context(10, true).unwrap();
 
     let buffer = Rc::new(RefCell::new(LockedBuf::with_size(BUF_CAPACITY).unwrap()));
 
@@ -61,10 +61,89 @@ async fn local_context() {
 }
 
 #[tokio::test]
+async fn not_use_semaphore() {
+    let (dir, path) = create_filled_tempfile(FILE_SIZE);
+
+    // Single kernel thread and sequential requests may work without semaphore
+    let (_aio, aio_handle, aio_background) = local_aio_context(1, false).unwrap();
+
+    let buffer = Rc::new(RefCell::new(LockedBuf::with_size(BUF_CAPACITY).unwrap()));
+
+    LocalSet::new()
+        .run_until({
+            let buffer = buffer.clone();
+
+            async move {
+                task::spawn_local(aio_background);
+
+                let file = File::open(&path, false).await.unwrap();
+
+                for _ in 0..10 {
+                    file.read_at(
+                        &aio_handle,
+                        0,
+                        &mut *buffer.borrow_mut(),
+                        BUF_CAPACITY as _,
+                        ReadFlags::empty(),
+                    )
+                    .await
+                    .unwrap();
+                }
+
+                task::spawn_local({
+                    let aio_handle = aio_handle.clone();
+                    let path = path.clone();
+
+                    async move {
+                        let file = File::open(&path, false).await.unwrap();
+                        let mut buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
+
+                        file.read_at(
+                            &aio_handle,
+                            0,
+                            &mut buffer,
+                            BUF_CAPACITY as _,
+                            ReadFlags::empty(),
+                        )
+                        .await
+                        .unwrap();
+                    }
+                });
+
+                task::yield_now().await;
+
+                let _ = task::spawn_local(async move {
+                    let file = File::open(&path, false).await.unwrap();
+                    let mut buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
+
+                    let err = file
+                        .read_at(
+                            &aio_handle,
+                            0,
+                            &mut buffer,
+                            BUF_CAPACITY as _,
+                            ReadFlags::empty(),
+                        )
+                        .await
+                        .unwrap_err();
+
+                    assert_matches!(err, AioCommandError::CapacityExceeded);
+                })
+                .await;
+            }
+        })
+        .await;
+
+    assert!(validate_block((&*buffer.borrow()).as_ref()));
+
+    dir.close().unwrap();
+}
+
+#[tokio::test]
 async fn aio_close() {
     let (dir, path) = create_filled_tempfile(FILE_SIZE);
 
-    let (aio, aio_handle) = aio_context(10).unwrap();
+    let (aio, aio_handle) = aio_context(10, true).unwrap();
     let file = File::open(&path, false).await.unwrap();
 
     let mut buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
@@ -96,7 +175,7 @@ async fn file_open_and_meta() {
 
     let mut buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
 
-    let (_aio, aio_handle) = aio_context(10).unwrap();
+    let (_aio, aio_handle) = aio_context(10, true).unwrap();
 
     file.read_at(
         &aio_handle,
@@ -138,7 +217,7 @@ async fn file_create_and_set_len() {
 
     let mut buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
 
-    let (_aio, aio_handle) = aio_context(10).unwrap();
+    let (_aio, aio_handle) = aio_context(10, true).unwrap();
 
     file.write_at(
         &aio_handle,
@@ -175,7 +254,7 @@ async fn read_block_mt() {
 
     let mut buffer = LockedBuf::with_size(BUF_CAPACITY * 2).unwrap();
 
-    let (aio, aio_handle) = aio_context(10).unwrap();
+    let (aio, aio_handle) = aio_context(10, true).unwrap();
 
     let read_bytes = file
         .read_at(
@@ -192,7 +271,7 @@ async fn read_block_mt() {
 
     assert!(validate_block(&buffer.as_ref()[..BUF_CAPACITY]));
 
-    assert_eq!(10, aio.available_slots());
+    assert_eq!(10, aio.available_slots().unwrap());
 
     dir.close().unwrap();
 }
@@ -210,7 +289,7 @@ async fn panic_on_wrong_len() {
 
         let mut buffer = LockedBuf::with_size(BUF_CAPACITY).unwrap();
 
-        let (_aio, aio_handle) = aio_context(1).unwrap();
+        let (_aio, aio_handle) = aio_context(1, true).unwrap();
 
         file.read_at(
             &aio_handle,
@@ -236,7 +315,7 @@ async fn write_block_mt() {
 
         let file = Arc::new(open_options.aio_open(path.clone(), true).await.unwrap());
 
-        let (_aio, aio_handle) = aio_context(2).unwrap();
+        let (_aio, aio_handle) = aio_context(2, true).unwrap();
 
         {
             let mut buffer = LockedBuf::with_size(BUF_CAPACITY * 2).unwrap();
@@ -314,7 +393,7 @@ async fn invalid_offset() {
 
     let file = Arc::new(open_options.aio_open(path.clone(), false).await.unwrap());
 
-    let (_aio, aio_handle) = aio_context(10).unwrap();
+    let (_aio, aio_handle) = aio_context(10, true).unwrap();
     let res = file
         .read_at(
             &aio_handle,
@@ -343,7 +422,7 @@ async fn future_cancellation() {
 
     let num_slots = 10;
 
-    let (aio, aio_handle) = aio_context(num_slots).unwrap();
+    let (aio, aio_handle) = aio_context(num_slots, true).unwrap();
     let mut read = Box::pin(
         file.read_at(
             &aio_handle,
@@ -368,7 +447,7 @@ async fn future_cancellation() {
 
     mem::drop(read);
 
-    while aio.available_slots() != num_slots {
+    while aio.available_slots().unwrap() != num_slots {
         delay_for(Duration::from_millis(50)).await;
     }
 
@@ -384,7 +463,7 @@ async fn mixed_read_write_at() {
 
     let file = Arc::new(open_options.aio_open(path.clone(), true).await.unwrap());
 
-    let (_aio, aio_handle) = aio_context(7).unwrap();
+    let (_aio, aio_handle) = aio_context(7, true).unwrap();
 
     let seq1 = {
         let file = file.clone();
