@@ -16,7 +16,7 @@ pub trait IntrusiveAdapter<M, L>:
     Adapter<PointerOps = DefaultPointerOps<Box<Request<M, L>>>>
 where
     M: RawMutex,
-    L: DefaultLinkOps,
+    L: DefaultLinkOps + Default,
 {
     /// Create new intrusive adapter
     fn new() -> Self;

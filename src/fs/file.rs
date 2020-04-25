@@ -75,6 +75,9 @@ impl File {
 
     /// Read the file through AIO at `offset` to the [`buffer`] with provided [`flags`].
     ///
+    /// See [`submit_request`] for more information
+    ///
+    /// [`submit_request`]: struct.GenericAioContextHandle.html#method.submit_request
     /// [`buffer`]: struct.LockedBuf.html
     /// [`flags`]: struct.ReadFlags.html
     pub async fn read_at<
@@ -108,6 +111,9 @@ impl File {
 
     /// Write to the file through AIO at `offset` from the [`buffer`] with provided [`flags`].
     ///
+    /// See [`submit_request`] for more information
+    ///
+    /// [`submit_request`]: struct.GenericAioContextHandle.html#method.submit_request
     /// [`buffer`]: struct.LockedBuf.html
     /// [`flags`]: struct.ReadFlags.html
     pub async fn write_at<
@@ -140,6 +146,10 @@ impl File {
     }
 
     /// Sync data and metadata through AIO
+    ///
+    /// See [`submit_request`] for more information
+    ///
+    /// [`submit_request`]: struct.GenericAioContextHandle.html#method.submit_request
     pub async fn sync_all<
         M: RawMutex,
         A: crate::IntrusiveAdapter<M, L>,
@@ -159,6 +169,10 @@ impl File {
     }
 
     /// Sync only data through AIO
+    ///
+    /// See [`submit_request`] for more information
+    ///
+    /// [`submit_request`]: struct.GenericAioContextHandle.html#method.submit_request
     pub async fn sync_data<
         M: RawMutex,
         A: crate::IntrusiveAdapter<M, L>,

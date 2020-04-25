@@ -36,7 +36,7 @@ async fn load_test() {
 
     let file = Arc::new(f);
 
-    let (_aio, aio_handle) = aio_context(NUM_AIO_THREADS).unwrap();
+    let (_aio, aio_handle) = aio_context(NUM_AIO_THREADS, true).unwrap();
 
     let mut f = vec![];
 
@@ -130,7 +130,7 @@ async fn read_many_blocks_mt() {
     let file = Arc::new(open_options.aio_open(path.clone(), true).await.unwrap());
 
     let num_slots = 7;
-    let (aio, aio_handle) = aio_context(num_slots).unwrap();
+    let (aio, aio_handle) = aio_context(num_slots, true).unwrap();
 
     // 50 waves of requests just going above the limit
 
@@ -166,7 +166,7 @@ async fn read_many_blocks_mt() {
         let _ = f.collect::<Vec<_>>().await;
 
         // all slots have been returned
-        assert_eq!(num_slots, aio.available_slots());
+        assert_eq!(num_slots, aio.available_slots().unwrap());
     }
 
     dir.close().unwrap();

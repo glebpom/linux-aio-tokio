@@ -63,7 +63,7 @@ pub(crate) struct GenericAioContextInner<
     context: aio::aio_context_t,
     eventfd: RawFd,
     num_slots: usize,
-    capacity: GenericSemaphore<M>,
+    capacity: Option<GenericSemaphore<M>>,
     requests: Mutex<M, Requests<M, A, L>>,
     stop_tx: Mutex<M, Option<oneshot::Sender<()>>>,
 }
@@ -79,6 +79,7 @@ where
     fn new(
         eventfd: RawFd,
         nr: usize,
+        use_semaphore: bool,
         stop_tx: oneshot::Sender<()>,
     ) -> Result<GenericAioContextInner<M, A, L>, AioContextError> {
         let mut context: aio::aio_context_t = 0;
@@ -92,7 +93,11 @@ where
         Ok(GenericAioContextInner {
             context,
             requests: Mutex::new(Requests::new(nr)?),
-            capacity: GenericSemaphore::new(true, nr),
+            capacity: if use_semaphore {
+                Some(GenericSemaphore::new(true, nr))
+            } else {
+                None
+            },
             eventfd,
             stop_tx: Mutex::new(Some(stop_tx)),
             num_slots: nr,
@@ -182,11 +187,20 @@ where
     A::LinkOps: LinkedListOps + Default,
 {
     /// Number of available AIO slots left in the context
+    ///
+    /// Return None if AIO context stopped, or if `use_semaphore`
+    /// was set to `false`
     pub fn available_slots(&self) -> Option<usize> {
-        self.inner.upgrade().map(|i| i.capacity.permits())
+        self.inner
+            .upgrade()
+            .and_then(|i| i.capacity.as_ref().map(|c| c.permits()))
     }
 
     /// Submit command to the AIO context
+    ///
+    /// If `use_semaphore` set to `false`, this function will return
+    /// `CapacityExceeded` error if the user's code tries to exceed
+    /// the allowed number of in-flight requests
     pub async fn submit_request(
         &self,
         fd: &impl AsRawFd,
@@ -198,9 +212,15 @@ where
             .ok_or_else(|| AioCommandError::AioStopped)?
             .clone();
 
-        inner_context.capacity.acquire(1).await.disarm();
+        if let Some(cap) = &inner_context.capacity {
+            cap.acquire(1).await.disarm();
+        }
 
-        let mut request = inner_context.requests.lock().take();
+        let mut request = inner_context
+            .requests
+            .lock()
+            .take()
+            .ok_or(AioCommandError::CapacityExceeded)?;
 
         let request_addr = request.aio_addr();
 
@@ -233,7 +253,9 @@ where
                 .requests
                 .lock()
                 .return_in_flight_to_ready(request);
-            inner_context.capacity.release(1);
+            if let Some(c) = &inner_context.capacity {
+                c.release(1)
+            }
 
             return Err(AioCommandError::IoSubmit(io::Error::last_os_error()));
         }
@@ -265,10 +287,17 @@ where
     }
 }
 
-/// Create new AIO context
+/// Create new AIO context with `nr` number of threads
+///
+/// If `use_semaphore` is set to true, the request sending future
+/// will wait until the kernel thread is freed. Otherwise, no wait
+/// for available capacity occurs. It's the user's code
+/// responsibility to ensure that number of in-flight queries
+/// doesn't exceed the number of kernel threads.
 #[allow(clippy::type_complexity)]
 pub fn generic_aio_context<M, A, L>(
     nr: usize,
+    use_semaphore: bool,
 ) -> Result<
     (
         GenericAioContext<M, A, L>,
@@ -289,6 +318,7 @@ where
     let inner = Arc::new(GenericAioContextInner::new(
         eventfd.as_raw_fd(),
         nr,
+        use_semaphore,
         stop_tx,
     )?);
 
@@ -343,7 +373,10 @@ where
                             .requests
                             .lock()
                             .return_outstanding_to_ready(request_ptr);
-                        inner.capacity.release(1)
+
+                        if let Some(c) = &inner.capacity {
+                            c.release(1)
+                        }
                     }
                 }
             }
@@ -378,8 +411,8 @@ where
     A::LinkOps: LinkedListOps + Default,
 {
     /// Number of available AIO slots left in the context
-    pub fn available_slots(&self) -> usize {
-        self.inner.capacity.permits()
+    pub fn available_slots(&self) -> Option<usize> {
+        self.inner.capacity.as_ref().map(|c| c.permits())
     }
 
     /// Close the AIO context and wait for all related running futures to complete.
@@ -394,9 +427,14 @@ where
 /// Create new AIO context suitable for cross-threaded environment (tokio rt-threaded),
 /// backed by parking_lot Mutex. Automatically spawn background task, which polls
 /// eventfd with `tokio::spawn`.
+///
+/// See [`generic_aio_context`](fn.generic_aio_context.html) for more details
 #[inline]
-pub fn aio_context(nr: usize) -> Result<(AioContext, AioContextHandle), AioContextError> {
-    let (aio_context, aio_handle, background) = generic_aio_context(nr)?;
+pub fn aio_context(
+    nr: usize,
+    use_semaphore: bool,
+) -> Result<(AioContext, AioContextHandle), AioContextError> {
+    let (aio_context, aio_handle, background) = generic_aio_context(nr, use_semaphore)?;
     tokio::spawn(background);
 
     Ok((aio_context, aio_handle))
@@ -412,9 +450,12 @@ pub type AioContextHandle =
     GenericAioContextHandle<parking_lot::RawMutex, SyncRequestAdapter, AtomicLink>;
 
 /// Create new AIO context suitable for single-threaded environment (tokio rt-core)
+///
+/// See [`generic_aio_context`](fn.generic_aio_context.html) for more details.
 #[inline]
 pub fn local_aio_context(
     nr: usize,
+    use_semaphore: bool,
 ) -> Result<
     (
         LocalAioContext,
@@ -423,7 +464,7 @@ pub fn local_aio_context(
     ),
     AioContextError,
 > {
-    generic_aio_context(nr)
+    generic_aio_context(nr, use_semaphore)
 }
 
 /// AIO context suitable for cross-threaded environment (tokio rt-core)

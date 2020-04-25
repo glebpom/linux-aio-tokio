@@ -32,12 +32,24 @@ impl RequestInner {
 }
 
 #[derive(Debug)]
-pub struct Request<M: RawMutex, L: DefaultLinkOps> {
+pub struct Request<M: RawMutex, L: DefaultLinkOps + Default> {
     link: L,
     pub(crate) inner: Mutex<M, RequestInner>,
 }
 
-impl<M: RawMutex, L: DefaultLinkOps> Request<M, L> {
+impl<M: RawMutex, L: DefaultLinkOps + Default> Default for Request<M, L> {
+    fn default() -> Self {
+        Request {
+            link: Default::default(),
+            inner: Mutex::new(RequestInner {
+                aio_req: unsafe { mem::zeroed() },
+                completed_tx: None,
+                buf_lifetime_extender: None,
+            }),
+        }
+    }
+}
+impl<M: RawMutex, L: DefaultLinkOps + Default> Request<M, L> {
     pub fn aio_addr(&self) -> u64 {
         (unsafe { mem::transmute::<_, usize>(self as *const Self) }) as u64
     }
@@ -109,14 +121,7 @@ where
         let mut ready_pool = LinkedList::new(A::new());
 
         for _ in 0..nr {
-            ready_pool.push_back(Box::new(Request {
-                link: Default::default(),
-                inner: Mutex::new(RequestInner {
-                    aio_req: unsafe { mem::zeroed() },
-                    completed_tx: None,
-                    buf_lifetime_extender: None,
-                }),
-            }));
+            ready_pool.push_back(Box::new(Request::default()));
         }
 
         Ok(Requests {
@@ -145,9 +150,7 @@ where
         self.ready_pool.push_back(req);
     }
 
-    pub fn take(&mut self) -> Box<Request<M, L>> {
-        self.ready_pool.pop_front().expect(
-            "could not retrieve request from ready_pool after successful acquire from semaphore",
-        )
+    pub fn take(&mut self) -> Option<Box<Request<M, L>>> {
+        self.ready_pool.pop_front()
     }
 }

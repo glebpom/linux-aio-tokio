@@ -6,7 +6,7 @@ use linux_aio_tokio::{aio_context, AioOpenOptionsExt, LockedBuf, ReadFlags, Writ
 
 #[tokio::main]
 async fn main() {
-    let (aio, aio_handle) = aio_context(8).unwrap();
+    let (aio, aio_handle) = aio_context(8, true).unwrap();
 
     let dir = tempdir().unwrap();
 
