@@ -17,7 +17,7 @@ Posix AIO is implemented using a pool of userland threads, which invoke regular,
 Add this to your `Cargo.toml`:
 
     [dependencies]
-    linux-aio-tokio = "0.2"
+    linux-aio-tokio = "0.3"
 
 ## Examples
 
