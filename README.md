@@ -19,11 +19,6 @@ Add this to your `Cargo.toml`:
     [dependencies]
     linux-aio-tokio = "0.2"
 
-## Stability
-
-Versions `0.2.x` are considered unstable and under active development. The API may change between patch versions, until the next
-minor version is released. Consider using the fixed version to prevent compilation errors.
-
 ## Examples
 
 ```rust
@@ -35,7 +30,7 @@ use linux_aio_tokio::{aio_context, AioOpenOptionsExt, LockedBuf, ReadFlags, Writ
 
 #[tokio::main]
 async fn main() {
-    let (aio, aio_handle) = aio_context(8).unwrap();
+    let (aio, aio_handle) = aio_context(8, true).unwrap();
 
     let dir = tempdir().unwrap();
 
