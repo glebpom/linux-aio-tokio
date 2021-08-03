@@ -1,4 +1,4 @@
-FROM rust:1.43.0
+FROM rust:1.54
 
 ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \

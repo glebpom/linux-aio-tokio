@@ -6,7 +6,7 @@ use std::task::{Context, Poll};
 use futures::channel::oneshot;
 use futures::{ready, Future};
 use intrusive_collections::DefaultLinkOps;
-use lock_api::RawMutex;
+use parking_lot::lock_api::RawMutex;
 
 use crate::errors::AioCommandError;
 use crate::requests::Request;

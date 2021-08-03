@@ -9,7 +9,7 @@ use futures::channel::oneshot;
 use futures::future::join_all;
 use futures::{select_biased, FutureExt};
 use tokio::task::{self, LocalSet};
-use tokio::time::delay_for;
+use tokio::time::sleep;
 
 use assert_matches::assert_matches;
 use helpers::*;
@@ -243,7 +243,7 @@ async fn file_create_and_set_len() {
     dir.close().unwrap();
 }
 
-#[tokio::test(threaded_scheduler)]
+#[tokio::test(flavor = "multi_thread")]
 async fn read_block_mt() {
     let (dir, path) = create_filled_tempfile(FILE_SIZE);
 
@@ -305,7 +305,7 @@ async fn panic_on_wrong_len() {
     dir.close().unwrap();
 }
 
-#[tokio::test(threaded_scheduler)]
+#[tokio::test(flavor = "multi_thread")]
 async fn write_block_mt() {
     let (dir, path) = create_filled_tempfile(FILE_SIZE);
 
@@ -382,7 +382,7 @@ async fn write_block_mt() {
     dir.close().unwrap();
 }
 
-#[tokio::test(threaded_scheduler)]
+#[tokio::test(flavor = "multi_thread")]
 async fn invalid_offset() {
     let (dir, path) = create_filled_tempfile(FILE_SIZE);
 
@@ -409,7 +409,7 @@ async fn invalid_offset() {
     dir.close().unwrap();
 }
 
-#[tokio::test(basic_scheduler)]
+#[tokio::test(flavor = "current_thread")]
 async fn future_cancellation() {
     let (dir, path) = create_filled_tempfile(FILE_SIZE);
 
@@ -448,13 +448,13 @@ async fn future_cancellation() {
     mem::drop(read);
 
     while aio.available_slots().unwrap() != num_slots {
-        delay_for(Duration::from_millis(50)).await;
+        sleep(Duration::from_millis(50)).await;
     }
 
     dir.close().unwrap();
 }
 
-#[tokio::test(threaded_scheduler)]
+#[tokio::test(flavor = "multi_thread")]
 async fn mixed_read_write_at() {
     let (dir, path) = create_filled_tempfile(FILE_SIZE);
 

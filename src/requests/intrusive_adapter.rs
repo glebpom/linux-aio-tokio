@@ -3,7 +3,7 @@
 use intrusive_collections::{
     intrusive_adapter, linked_list, Adapter, DefaultLinkOps, DefaultPointerOps,
 };
-use lock_api::RawMutex;
+use parking_lot::lock_api::RawMutex;
 
 use crate::requests::Request;
 use crate::{AtomicLink, NoopLock};

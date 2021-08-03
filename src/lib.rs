@@ -23,7 +23,7 @@ use futures::{pin_mut, select, FutureExt, StreamExt};
 use futures_intrusive::sync::GenericSemaphore;
 use intrusive_collections::linked_list::LinkedListOps;
 use intrusive_collections::{linked_list, DefaultLinkOps};
-use lock_api::{Mutex, RawMutex};
+use parking_lot::lock_api::{Mutex, RawMutex};
 use tokio::task;
 
 pub use commands::*;
@@ -209,7 +209,7 @@ where
         let inner_context = self
             .inner
             .upgrade()
-            .ok_or_else(|| AioCommandError::AioStopped)?
+            .ok_or(AioCommandError::AioStopped)?
             .clone();
 
         if let Some(cap) = &inner_context.capacity {

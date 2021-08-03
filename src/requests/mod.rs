@@ -7,7 +7,7 @@ use std::{io, mem};
 use futures::channel::oneshot;
 use intrusive_collections::linked_list::LinkedListOps;
 use intrusive_collections::{DefaultLinkOps, LinkedList};
-use lock_api::{Mutex, RawMutex};
+use parking_lot::lock_api::{Mutex, RawMutex};
 
 use crate::locked_buf::LifetimeExtender;
 pub use crate::requests::atomic_link::AtomicLink;
@@ -51,7 +51,7 @@ impl<M: RawMutex, L: DefaultLinkOps + Default> Default for Request<M, L> {
 }
 impl<M: RawMutex, L: DefaultLinkOps + Default> Request<M, L> {
     pub fn aio_addr(&self) -> u64 {
-        (unsafe { mem::transmute::<_, usize>(self as *const Self) }) as u64
+        self as *const Self as u64
     }
 
     pub fn send_to_waiter(&self, data: AioResult) -> bool {

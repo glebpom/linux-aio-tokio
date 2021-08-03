@@ -1,9 +1,9 @@
+use std::{fmt, io};
 use std::cell::UnsafeCell;
 use std::mem::ManuallyDrop;
 use std::sync::Arc;
-use std::{fmt, io, mem};
 
-use memmap::MmapMut;
+use memmap2::MmapMut;
 use thiserror::Error;
 
 /// Error during [`LockedBuf`] creation
@@ -72,7 +72,7 @@ impl LockedBuf {
 
     pub(crate) fn aio_addr_and_len(&self) -> (u64, u64) {
         let len = unsafe { &*self.inner.get() }.bytes.len() as u64;
-        let ptr = unsafe { mem::transmute::<_, usize>((*self.inner.get()).bytes.as_ptr()) } as u64;
+        let ptr = unsafe { (*self.inner.get()).bytes.as_ptr() as usize } as u64;
         (ptr, len)
     }
 
@@ -108,6 +108,7 @@ impl Drop for LockedBufInner {
 }
 
 unsafe impl Send for LockedBuf {}
+
 unsafe impl Sync for LockedBuf {}
 
 unsafe impl Send for LifetimeExtender {}

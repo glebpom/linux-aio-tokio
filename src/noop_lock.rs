@@ -2,7 +2,7 @@
 //! until https://github.com/Matthias247/futures-intrusive/pull/38 is merged
 
 use core::marker::PhantomData;
-use lock_api::{GuardSend, RawMutex};
+use parking_lot::lock_api::{GuardSend, RawMutex};
 
 /// An unsafe (non-thread-safe) lock, equivalent to UnsafeCell
 #[derive(Debug)]
@@ -24,5 +24,5 @@ unsafe impl RawMutex for NoopLock {
         true
     }
 
-    fn unlock(&self) {}
+    unsafe fn unlock(&self) {}
 }

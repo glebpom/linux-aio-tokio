@@ -4,10 +4,11 @@ use std::time::Duration;
 
 use futures::future::join_all;
 use futures::stream::FuturesUnordered;
-use futures::{pin_mut, select, FutureExt, StreamExt};
+use futures::{pin_mut, FutureExt, StreamExt};
 use rand::{thread_rng, Rng};
 use tempfile::tempdir;
-use tokio::time::delay_for;
+use tokio::select;
+use tokio::time::sleep;
 
 use helpers::*;
 use linux_aio_tokio::AioOpenOptionsExt;
@@ -22,7 +23,7 @@ const NUM_AIO_THREADS: usize = 4;
 
 pub mod helpers;
 
-#[tokio::test(threaded_scheduler)]
+#[tokio::test(flavor = "multi_thread")]
 async fn load_test() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("tmp");
@@ -50,7 +51,7 @@ async fn load_test() {
             let file = file.clone();
 
             loop {
-                let page = thread_rng().gen_range(0, NUM_PAGES);
+                let page = thread_rng().gen_range(0..NUM_PAGES);
 
                 let res = file
                     .read_at(
@@ -79,7 +80,7 @@ async fn load_test() {
             let file = file.clone();
 
             loop {
-                let page = thread_rng().gen_range(0, NUM_PAGES);
+                let page = thread_rng().gen_range(0..NUM_PAGES);
                 thread_rng().fill(buffer.as_mut());
 
                 let res = file
@@ -102,7 +103,7 @@ async fn load_test() {
 
     pin_mut!(stress);
 
-    let mut timeout = delay_for(Duration::from_secs(30)).fuse();
+    let timeout = sleep(Duration::from_secs(30)).fuse();
 
     select! {
         _ = stress => {
@@ -117,7 +118,7 @@ async fn load_test() {
     dir.close().unwrap();
 }
 
-#[tokio::test(threaded_scheduler)]
+#[tokio::test(flavor = "multi_thread")]
 async fn read_many_blocks_mt() {
     const FILE_SIZE: usize = 1024 * 512;
     const BUF_CAPACITY: usize = 8192;
