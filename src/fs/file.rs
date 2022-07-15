@@ -5,7 +5,7 @@ use std::{fmt, io};
 
 use intrusive_collections::linked_list::LinkedListOps;
 use intrusive_collections::DefaultLinkOps;
-use parking_lot::lock_api::RawMutex;
+use lock_api::RawMutex;
 
 use crate::errors::AioCommandError;
 use crate::fs::AioOpenOptionsExt;
