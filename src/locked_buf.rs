@@ -5,7 +5,7 @@ use std::mem::ManuallyDrop;
 use std::sync::Arc;
 use std::{fmt, io};
 
-use memmap::MmapMut;
+use memmap2::MmapMut;
 use thiserror::Error;
 
 /// Error during [`LockedBuf`] creation
